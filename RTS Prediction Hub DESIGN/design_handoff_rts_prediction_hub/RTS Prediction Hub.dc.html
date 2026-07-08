@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prop-types@15/prop-types.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--scroll, #2a2a2e); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  @keyframes rtsPulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+  @keyframes rtsShimmer { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
+  .rts-skel { background: linear-gradient(90deg, var(--panel2,#1e1e21) 0px, var(--border,#2a2a2e) 200px, var(--panel2,#1e1e21) 400px); background-size: 800px 100%; animation: rtsShimmer 1.3s infinite linear; border-radius: 10px; }
+</style>
+</helmet>
+
+<div style="{{ themeVars }}">
+  <div style="display:flex; min-height:100vh; width:100%; font-family:'Inter Tight',system-ui,sans-serif; color:var(--text,#ededef); background:var(--bg,#0a0a0b);">
+
+    <!-- ============ SIDEBAR ============ -->
+    <aside style="width:268px; flex:none; display:flex; flex-direction:column; gap:4px; padding:24px 16px; border-right:1px solid var(--border,rgba(255,255,255,.08)); background:var(--panel,#161618); position:sticky; top:0; height:100vh;">
+      <div style="padding:4px 8px 18px 8px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="width:30px; height:30px; border-radius:8px; background:linear-gradient(135deg,#5b8def,#8b5cf6); display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px; color:#fff; box-shadow:0 2px 10px rgba(91,141,239,.35);">R</div>
+          <div>
+            <div style="font-size:15px; font-weight:700; letter-spacing:-.01em; line-height:1.1;">RTS Prediction Hub</div>
+          </div>
+        </div>
+        <div style="font-size:11.5px; color:var(--muted,#8e8e96); margin:10px 0 0 2px; line-height:1.4;">Shared LightGBM endpoint · DGX&nbsp;Spark</div>
+        <div style="display:inline-flex; align-items:center; gap:7px; margin-top:12px; padding:5px 10px; border-radius:999px; background:color-mix(in srgb,#16a34a 14%,transparent); border:1px solid color-mix(in srgb,#16a34a 35%,transparent);">
+          <span style="width:7px;height:7px;border-radius:999px;background:#16a34a; box-shadow:0 0 7px #16a34a; animation:rtsPulse 2s infinite;"></span>
+          <span style="font-size:11px; font-weight:600; color:#22c55e;">API connected</span>
+        </div>
+      </div>
+
+      <div style="font-size:10.5px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted,#8e8e96); padding:6px 8px;">Prediction apps</div>
+      <sc-for list="{{ navItems }}" as="item" hint-placeholder-count="3">
+        <button onClick="{{ item.onClick }}" style="{{ item.style }}">
+          <span style="width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;flex:none;font-size:13px;font-weight:700;background:{{ item.iconBg }};color:{{ item.iconColor }};">{{ item.icon }}</span>
+          <span style="display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:0;">
+            <span style="font-size:12.5px;font-weight:600;line-height:1.2;">{{ item.title }}</span>
+            <span style="font-size:10.5px;color:var(--muted,#8e8e96);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:175px;">{{ item.sub }}</span>
+          </span>
+        </button>
+      </sc-for>
+
+      <div style="margin-top:auto; padding-top:16px;">
+        <button onClick="{{ toggleTheme }}" style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:9px 12px; border-radius:10px; border:1px solid var(--border,rgba(255,255,255,.08)); background:var(--panel2,#1e1e21); color:var(--text,#ededef); cursor:pointer; font-family:inherit; font-size:12px; font-weight:500;">
+          <span>{{ themeLabel }}</span>
+          <span style="font-size:14px;">{{ themeIcon }}</span>
+        </button>
+        <div style="font-size:10px; color:var(--muted,#8e8e96); text-align:center; margin-top:12px; font-family:'JetBrains Mono',monospace;">model: v0-standin (interim)</div>
+      </div>
+    </aside>
+
+    <!-- ============ MAIN ============ -->
+    <main style="flex:1; min-width:0; padding:32px 36px 64px; max-width:1500px;">
+      <header style="margin-bottom:24px;">
+        <div style="font-size:11px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; color:var(--accent,#5b8def); margin-bottom:8px;">{{ viewKicker }}</div>
+        <h1 style="font-size:26px; font-weight:700; letter-spacing:-.02em; margin:0 0 8px;">{{ viewTitle }}</h1>
+        <p style="font-size:14px; color:var(--muted,#8e8e96); margin:0; max-width:680px; line-height:1.5;">{{ viewDesc }}</p>
+      </header>
+
+      <!-- ====== VIEW 1: MULTIFAMILY ====== -->
+      <sc-if value="{{ isMF }}" hint-placeholder-val="{{ true }}">
+        <div>
+          <!-- controls -->
+          <div style="display:flex; flex-wrap:wrap; align-items:flex-end; gap:18px; padding:18px 20px; border-radius:14px; border:1px solid var(--border,rgba(255,255,255,.08)); background:var(--panel,#161618); margin-bottom:22px;">
+            <div style="flex:1; min-width:280px;">
+              <div style="font-size:11px;font-weight:600;color:var(--muted,#8e8e96);margin-bottom:8px;">Buildings</div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;">
+                <sc-for list="{{ buildingChips }}" as="c" hint-placeholder-count="4">
+                  <button onClick="{{ c.onClick }}" style="{{ c.style }}">{{ c.name }}</button>
+                </sc-for>
+              </div>
+            </div>
+            <div>
+              <div style="font-size:11px;font-weight:600;color:var(--muted,#8e8e96);margin-bottom:8px;">As-of date</div>
+              <input type="date" value="{{ asOf }}" onChange="{{ setAsOf }}" style="padding:9px 12px;border-radius:9px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel2,#1e1e21);color:var(--text,#ededef);font-family:'JetBrains Mono',monospace;font-size:12.5px;color-scheme:var(--scheme,dark);" />
+            </div>
+            <div style="min-width:180px;">
+              <div style="font-size:11px;font-weight:600;color:var(--muted,#8e8e96);margin-bottom:8px;">Max units · <span style="color:var(--text,#ededef);font-family:'JetBrains Mono',monospace;">{{ maxUnits }}</span></div>
+              <input type="range" min="10" max="400" step="10" value="{{ maxUnits }}" onChange="{{ setMaxUnits }}" style="width:100%;accent-color:var(--accent,#5b8def);" />
+            </div>
+            <button onClick="{{ runMF }}" style="{{ runBtnStyle }}">{{ runLabel }}</button>
+          </div>
+
+          <sc-if value="{{ loading }}" hint-placeholder-val="{{ true }}">
+            <div>
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px;">
+                <div class="rts-skel" style="height:104px;"></div><div class="rts-skel" style="height:104px;"></div><div class="rts-skel" style="height:104px;"></div><div class="rts-skel" style="height:104px;"></div>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;"><div class="rts-skel" style="height:320px;"></div><div class="rts-skel" style="height:320px;"></div></div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ ready }}" hint-placeholder-val="{{ false }}">
+            <div>
+              <!-- KPI row -->
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px;">
+                <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="4">
+                  <div style="padding:18px 20px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);">
+                    <div style="font-size:11.5px;font-weight:600;color:var(--muted,#8e8e96);margin-bottom:10px;">{{ k.label }}</div>
+                    <div style="font-size:30px;font-weight:700;letter-spacing:-.02em;font-family:'JetBrains Mono',monospace;color:{{ k.color }};">{{ k.display }}</div>
+                    <div style="font-size:11.5px;color:var(--muted,#8e8e96);margin-top:6px;">{{ k.sub }}</div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <!-- charts grid -->
+              <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:16px;">
+                <div style="padding:18px 20px 8px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;"><div style="font-size:13.5px;font-weight:600;">Move-out probability distribution</div><div style="font-size:11px;color:var(--muted,#8e8e96);">20 bins · colored by risk tier</div></div>
+                  <div ref="{{ mfHistRef }}" style="height:280px;"></div>
+                </div>
+                <div style="padding:18px 20px 8px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);">
+                  <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">Risk-tier breakdown</div>
+                  <div ref="{{ mfDonutRef }}" style="height:280px;"></div>
+                  <div style="display:flex;justify-content:center;gap:16px;margin-top:2px;">
+                    <span style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted,#8e8e96);"><span style="width:9px;height:9px;border-radius:2px;background:#16a34a;"></span>Low</span>
+                    <span style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted,#8e8e96);"><span style="width:9px;height:9px;border-radius:2px;background:#f59e0b;"></span>Medium</span>
+                    <span style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted,#8e8e96);"><span style="width:9px;height:9px;border-radius:2px;background:#dc2626;"></span>High</span>
+                  </div>
+                </div>
+              </div>
+
+              <div style="padding:18px 20px 8px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);margin-bottom:16px;">
+                <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">Top 15 at-risk tenants</div>
+                <div ref="{{ mfTopRef }}" style="height:380px;"></div>
+              </div>
+
+              <!-- table -->
+              <div style="border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);overflow:hidden;">
+                <div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border,rgba(255,255,255,.08));"><div style="font-size:13.5px;font-weight:600;">Tenant scores</div><div style="font-size:11px;color:var(--muted,#8e8e96);font-family:'JetBrains Mono',monospace;">{{ tableCount }} rows · click headers to sort</div></div>
+                <div style="overflow-x:auto;max-height:520px;overflow-y:auto;">
+                  <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+                    <thead style="position:sticky;top:0;background:var(--panel,#161618);z-index:1;">
+                      <tr>
+                        <sc-for list="{{ mfCols }}" as="col" hint-placeholder-count="7">
+                          <th onClick="{{ col.onClick }}" style="{{ col.style }}">{{ col.label }}{{ col.arrow }}</th>
+                        </sc-for>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <sc-for list="{{ mfRows }}" as="r" hint-placeholder-count="8">
+                        <tr style="border-top:1px solid var(--border,rgba(255,255,255,.06));">
+                          <td style="padding:11px 16px;font-family:'JetBrains Mono',monospace;color:var(--muted,#8e8e96);">{{ r.scode }}</td>
+                          <td style="padding:11px 16px;">{{ r.property }}</td>
+                          <td style="padding:11px 16px;font-family:'JetBrains Mono',monospace;">{{ r.unit }}</td>
+                          <td style="padding:11px 16px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;">{{ r.prob }}</td>
+                          <td style="padding:11px 16px;"><span style="{{ r.tierStyle }}">{{ r.tier }}</span></td>
+                          <td style="padding:11px 16px;"><span style="{{ r.noticeStyle }}">{{ r.notice }}</span></td>
+                          <td style="padding:11px 16px;text-align:center;">{{ r.actual }}</td>
+                        </tr>
+                      </sc-for>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div style="font-size:11px;color:var(--muted,#8e8e96);font-family:'JetBrains Mono',monospace;margin-top:14px;">{{ resultCaption }}</div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <!-- ====== VIEW 2: BROKERAGE ====== -->
+      <sc-if value="{{ isBK }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:18px;padding:18px 20px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);margin-bottom:22px;">
+            <div style="flex:1;min-width:240px;">
+              <div style="font-size:11px;font-weight:600;color:var(--muted,#8e8e96);margin-bottom:8px;">Search company (id or name)</div>
+              <input type="text" value="{{ bkQuery }}" onChange="{{ setBkQuery }}" placeholder="e.g. 840 or Interiors" style="width:100%;padding:9px 12px;border-radius:9px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel2,#1e1e21);color:var(--text,#ededef);font-family:inherit;font-size:13px;" />
+            </div>
+            <div style="min-width:280px;">
+              <div style="font-size:11px;font-weight:600;color:var(--muted,#8e8e96);margin-bottom:8px;">Sample companies</div>
+              <select value="{{ bkCompany }}" onChange="{{ setBkCompany }}" style="width:100%;padding:9px 12px;border-radius:9px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel2,#1e1e21);color:var(--text,#ededef);font-family:inherit;font-size:13px;color-scheme:var(--scheme,dark);">
+                <sc-for list="{{ bkCompanyOpts }}" as="o" hint-placeholder-count="6">
+                  <option value="{{ o.value }}">{{ o.label }}</option>
+                </sc-for>
+              </select>
+            </div>
+            <button onClick="{{ runBK }}" style="{{ runBtnStyle }}">{{ runLabel }}</button>
+          </div>
+
+          <sc-if value="{{ loading }}" hint-placeholder-val="{{ true }}">
+            <div>
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px;"><div class="rts-skel" style="height:104px;"></div><div class="rts-skel" style="height:104px;"></div><div class="rts-skel" style="height:104px;"></div><div class="rts-skel" style="height:104px;"></div></div>
+              <div class="rts-skel" style="height:340px;"></div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ ready }}" hint-placeholder-val="{{ false }}">
+            <div>
+              <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:18px;padding:14px 20px;border-radius:12px;background:var(--panel2,#1e1e21);border:1px solid var(--border,rgba(255,255,255,.08));">
+                <div style="font-size:17px;font-weight:700;">{{ bkName }}</div>
+                <span style="font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--muted,#8e8e96);">hMy {{ bkHMy }}</span>
+                <span style="font-size:11.5px;padding:3px 10px;border-radius:999px;background:var(--panel,#161618);border:1px solid var(--border,rgba(255,255,255,.08));">{{ bkMarket }}</span>
+                <span style="font-size:11.5px;padding:3px 10px;border-radius:999px;background:var(--panel,#161618);border:1px solid var(--border,rgba(255,255,255,.08));">{{ bkIndustry }}</span>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px;">
+                <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="4">
+                  <div style="padding:18px 20px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);">
+                    <div style="font-size:11.5px;font-weight:600;color:var(--muted,#8e8e96);margin-bottom:10px;">{{ k.label }}</div>
+                    <div style="font-size:30px;font-weight:700;letter-spacing:-.02em;font-family:'JetBrains Mono',monospace;color:{{ k.color }};">{{ k.display }}</div>
+                    <div style="font-size:11.5px;color:var(--muted,#8e8e96);margin-top:6px;">{{ k.sub }}</div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="padding:18px 20px 8px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                  <div style="font-size:13.5px;font-weight:600;">Conversion probability over time</div>
+                  <div style="display:flex;gap:14px;align-items:center;font-size:11px;color:var(--muted,#8e8e96);"><span style="display:flex;align-items:center;gap:6px;"><span style="width:16px;height:2px;background:var(--accent,#5b8def);display:inline-block;"></span>model</span><span style="display:flex;align-items:center;gap:6px;"><span style="width:16px;height:0;border-top:2px dashed #94a3b8;display:inline-block;"></span>current rules</span></div>
+                </div>
+                <div ref="{{ bkLineRef }}" style="height:320px;"></div>
+              </div>
+
+              <div style="padding:16px 20px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);margin-bottom:16px;">
+                <div style="font-size:13px;font-weight:600;margin-bottom:12px;">Risk tier over time</div>
+                <div style="display:flex;gap:2px;border-radius:6px;overflow:hidden;height:26px;">
+                  <sc-for list="{{ bkStrip }}" as="s" hint-placeholder-count="12">
+                    <div title="{{ s.title }}" style="{{ s.style }}"></div>
+                  </sc-for>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted,#8e8e96);font-family:'JetBrains Mono',monospace;margin-top:6px;"><span>{{ bkStripStart }}</span><span>{{ bkStripEnd }}</span></div>
+              </div>
+
+              <div style="border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);overflow:hidden;">
+                <div style="padding:16px 20px;border-bottom:1px solid var(--border,rgba(255,255,255,.08));font-size:13.5px;font-weight:600;">Snapshot history</div>
+                <div style="overflow-x:auto;max-height:420px;overflow-y:auto;">
+                  <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+                    <thead style="position:sticky;top:0;background:var(--panel,#161618);"><tr>
+                      <th style="text-align:left;padding:11px 20px;font-size:11px;font-weight:600;color:var(--muted,#8e8e96);">Snapshot date</th>
+                      <th style="text-align:right;padding:11px 20px;font-size:11px;font-weight:600;color:var(--muted,#8e8e96);">Conversion probability</th>
+                      <th style="text-align:left;padding:11px 20px;font-size:11px;font-weight:600;color:var(--muted,#8e8e96);">Risk tier</th>
+                    </tr></thead>
+                    <tbody>
+                      <sc-for list="{{ bkRows }}" as="r" hint-placeholder-count="8">
+                        <tr style="border-top:1px solid var(--border,rgba(255,255,255,.06));">
+                          <td style="padding:11px 20px;font-family:'JetBrains Mono',monospace;">{{ r.date }}</td>
+                          <td style="padding:11px 20px;text-align:right;font-family:'JetBrains Mono',monospace;font-weight:600;">{{ r.prob }}</td>
+                          <td style="padding:11px 20px;"><span style="{{ r.tierStyle }}">{{ r.tier }}</span></td>
+                        </tr>
+                      </sc-for>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div style="font-size:11px;color:var(--muted,#8e8e96);font-family:'JetBrains Mono',monospace;margin-top:14px;">{{ resultCaption }}</div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <!-- ====== VIEW 3: MARKETING ====== -->
+      <sc-if value="{{ isMK }}" hint-placeholder-val="{{ false }}">
+        <div>
+          <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:18px;padding:18px 20px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);margin-bottom:22px;">
+            <div>
+              <div style="font-size:11px;font-weight:600;color:var(--muted,#8e8e96);margin-bottom:8px;">Segment type</div>
+              <div style="display:flex;background:var(--panel2,#1e1e21);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:10px;padding:3px;">
+                <button onClick="{{ setCohortMode }}" style="{{ cohortTabStyle }}">Cohort</button>
+                <button onClick="{{ setIndustryMode }}" style="{{ industryTabStyle }}">Industry</button>
+              </div>
+            </div>
+            <div style="min-width:240px;">
+              <div style="font-size:11px;font-weight:600;color:var(--muted,#8e8e96);margin-bottom:8px;">{{ mkOptLabel }}</div>
+              <select value="{{ mkKey }}" onChange="{{ setMkKey }}" style="width:100%;padding:9px 12px;border-radius:9px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel2,#1e1e21);color:var(--text,#ededef);font-family:inherit;font-size:13px;color-scheme:var(--scheme,dark);">
+                <sc-for list="{{ mkOpts }}" as="o" hint-placeholder-count="4">
+                  <option value="{{ o }}">{{ o }}</option>
+                </sc-for>
+              </select>
+            </div>
+            <button onClick="{{ runMK }}" style="{{ runBtnStyle }}">{{ mkRunLabel }}</button>
+          </div>
+
+          <sc-if value="{{ loading }}" hint-placeholder-val="{{ true }}">
+            <div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:22px;"><div class="rts-skel" style="height:104px;"></div><div class="rts-skel" style="height:104px;"></div><div class="rts-skel" style="height:104px;"></div></div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;"><div class="rts-skel" style="height:300px;"></div><div class="rts-skel" style="height:300px;"></div></div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ ready }}" hint-placeholder-val="{{ false }}">
+            <div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px;">
+                <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="3">
+                  <div style="padding:18px 20px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);">
+                    <div style="font-size:11.5px;font-weight:600;color:var(--muted,#8e8e96);margin-bottom:10px;">{{ k.label }}</div>
+                    <div style="font-size:30px;font-weight:700;letter-spacing:-.02em;font-family:'JetBrains Mono',monospace;color:{{ k.color }};">{{ k.display }}</div>
+                    <div style="font-size:11.5px;color:var(--muted,#8e8e96);margin-top:6px;">{{ k.sub }}</div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+                <div style="padding:18px 20px 8px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);">
+                  <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">Avg win probability by market</div>
+                  <div ref="{{ mkMarketRef }}" style="height:260px;"></div>
+                </div>
+                <div style="padding:18px 20px 8px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);">
+                  <div style="font-size:13.5px;font-weight:600;margin-bottom:6px;">Decile distribution</div>
+                  <div ref="{{ mkDecileRef }}" style="height:260px;"></div>
+                </div>
+              </div>
+
+              <div style="padding:18px 20px;border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;"><div style="font-size:13.5px;font-weight:600;">Win-rate heatmap · vertical × size band</div><div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted,#8e8e96);"><span>0%</span><span style="width:90px;height:10px;border-radius:3px;background:linear-gradient(90deg,color-mix(in srgb,#16a34a 8%,transparent),#16a34a);display:inline-block;"></span><span>{{ heatMax }}</span></div></div>
+                <div style="display:grid;grid-template-columns:140px repeat(5,1fr);gap:6px;min-width:560px;">
+                  <div></div>
+                  <sc-for list="{{ heatCols }}" as="c" hint-placeholder-count="5">
+                    <div style="font-size:11px;font-weight:600;text-align:center;color:var(--muted,#8e8e96);text-transform:capitalize;">{{ c }}</div>
+                  </sc-for>
+                  <sc-for list="{{ heatRows }}" as="row" hint-placeholder-count="6">
+                    <div style="display:contents;">
+                      <div style="font-size:11.5px;font-weight:500;display:flex;align-items:center;text-transform:capitalize;color:var(--muted,#8e8e96);">{{ row.label }}</div>
+                      <sc-for list="{{ row.cells }}" as="cell" hint-placeholder-count="5">
+                        <div title="{{ cell.title }}" style="{{ cell.style }}">{{ cell.val }}</div>
+                      </sc-for>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+
+              <div style="border-radius:14px;border:1px solid var(--border,rgba(255,255,255,.08));background:var(--panel,#161618);overflow:hidden;">
+                <div style="padding:16px 20px;border-bottom:1px solid var(--border,rgba(255,255,255,.08));font-size:13.5px;font-weight:600;">Cohort win rates · sized by deal count</div>
+                <div style="padding:8px 20px 16px;">
+                  <sc-for list="{{ cohortBars }}" as="b" hint-placeholder-count="8">
+                    <div style="display:flex;align-items:center;gap:14px;padding:8px 0;border-bottom:1px solid var(--border,rgba(255,255,255,.05));">
+                      <div style="width:230px;flex:none;font-size:12px;display:flex;justify-content:space-between;gap:8px;"><span style="text-transform:capitalize;">{{ b.label }}</span><span style="font-family:'JetBrains Mono',monospace;color:var(--muted,#8e8e96);">n={{ b.deals }}</span></div>
+                      <div style="flex:1;height:22px;background:var(--panel2,#1e1e21);border-radius:6px;overflow:hidden;"><div style="{{ b.barStyle }}"></div></div>
+                      <div style="width:48px;flex:none;text-align:right;font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;">{{ b.rate }}</div>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="font-size:11px;color:var(--muted,#8e8e96);font-family:'JetBrains Mono',monospace;margin-top:14px;">{{ resultCaption }}</div>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    view: 'mf',
+    dark: true,
+    loading: false,
+    anim: 1,
+    // multifamily
+    mfData: null,
+    selBuildings: ['Country Club Village','Sierra Pointe','Residences at 62W','Winwood'],
+    asOf: '2026-06-23',
+    maxUnits: 120,
+    sortKey: 'churn_probability',
+    sortDir: 'desc',
+    // brokerage
+    bkData: null,
+    bkCompanies: [],
+    bkCompany: '840',
+    bkQuery: '',
+    // marketing
+    mkData: null,
+    mkMode: 'cohort',
+    mkKey: 'healthcare-vertical',
+  };
+
+  BUILDINGS = ['Country Club Village','Sierra Pointe','Residences at 62W','Winwood'];
+
+  // refs for Recharts roots
+  mfHist = React.createRef(); mfDonut = React.createRef(); mfTop = React.createRef();
+  bkLine = React.createRef();
+  mkMarket = React.createRef(); mkDecile = React.createRef();
+
+  async componentDidMount() {
+    this.api = await import('./api.js');
+    const companies = await this.api.listBrokerageCompanies();
+    this.setState({ bkCompanies: companies });
+    this.runMF();
+  }
+
+  componentDidUpdate() { this.renderCharts(); }
+
+  // ---------- theme ----------
+  theme() {
+    return this.state.dark
+      ? { grid:'rgba(255,255,255,0.07)', axis:'#6b6b73', tick:'#a8a8b0', accent:'#5b8def', panel:'#161618', text:'#ededef' }
+      : { grid:'rgba(0,0,0,0.07)', axis:'#9aa0a6', tick:'#52525b', accent:'#2563eb', panel:'#ffffff', text:'#18181b' };
+  }
+  themeVars() {
+    const d = this.state.dark;
+    const v = d
+      ? { '--bg':'#0a0a0b','--panel':'#161618','--panel2':'#1e1e21','--border':'rgba(255,255,255,.08)','--text':'#ededef','--muted':'#8e8e96','--accent':'#5b8def','--scroll':'#2a2a2e','--scheme':'dark' }
+      : { '--bg':'#f6f6f7','--panel':'#ffffff','--panel2':'#f1f1f3','--border':'rgba(0,0,0,.08)','--text':'#18181b','--muted':'#6b7280','--accent':'#2563eb','--scroll':'#d4d4d8','--scheme':'light' };
+    return { ...v, minHeight:'100vh', transition:'background .25s', colorScheme: d ? 'dark' : 'light' };
+  }
+
+  // ---------- tweening ----------
+  startTween() {
+    this.setState({ anim: 0 });
+    const t0 = performance.now();
+    const dur = 750;
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      this.setState({ anim: eased });
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  // ---------- runners ----------
+  async runMF() {
+    this.setState({ loading: true });
+    const data = await this.api.predictMultifamily({ buildings: this.state.selBuildings, asOf: this.state.asOf, maxUnits: this.state.maxUnits });
+    this.setState({ mfData: data, loading: false });
+    this.startTween();
+  }
+  async runBK() {
+    this.setState({ loading: true });
+    const data = await this.api.predictBrokerage({ companyId: this.state.bkCompany, query: this.state.bkQuery });
+    this.setState({ bkData: data, loading: false, bkCompany: String(data.company.hMy) });
+    this.startTween();
+  }
+  async runMK() {
+    this.setState({ loading: true });
+    const data = await this.api.aggregateMarketing({ mode: this.state.mkMode, key: this.state.mkKey });
+    this.setState({ mkData: data, loading: false });
+    this.startTween();
+  }
+
+  switchView(v) {
+    this.setState({ view: v });
+    if (v === 'bk' && !this.state.bkData) this.runBK();
+    if (v === 'mk' && !this.state.mkData) this.runMK();
+  }
+
+  // ---------- helpers ----------
+  pct(x, d = 0) { return (x * 100).toFixed(d) + '%'; }
+  tierColor(t) { return { low:'#16a34a', medium:'#f59e0b', high:'#dc2626' }[t] || '#8e8e96'; }
+  tierBadge(t) {
+    const c = this.tierColor(t);
+    return `display:inline-block;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;text-transform:capitalize;color:${c};background:color-mix(in srgb,${c} 16%,transparent);border:1px solid color-mix(in srgb,${c} 38%,transparent);`;
+  }
+
+  // ---------- chart rendering ----------
+  ensureRoot(node) {
+    if (!node) return null;
+    if (!this._roots) this._roots = new WeakMap();
+    let r = this._roots.get(node);
+    if (!r) { r = window.ReactDOM.createRoot(node); this._roots.set(node, r); }
+    return r;
+  }
+  renderCharts() {
+    const R = window.Recharts, h = window.React.createElement, RD = window.ReactDOM;
+    if (!R || !RD) { clearTimeout(this._rcTimer); this._rcTimer = setTimeout(() => this.renderCharts(), 120); return; }
+    const T = this.theme();
+    const tip = { contentStyle:{ background:T.panel, border:`1px solid ${T.grid}`, borderRadius:10, fontSize:12, color:T.text, fontFamily:"'Inter Tight',sans-serif" }, cursor:{ fill:'rgba(127,127,140,0.08)' }, itemStyle:{ color:T.text }, labelStyle:{ color:T.tick } };
+    const ax = { tick:{ fill:T.tick, fontSize:11, fontFamily:"'JetBrains Mono',monospace" }, axisLine:{ stroke:T.grid }, tickLine:false };
+
+    if (this.state.view === 'mf' && this.state.mfData) this.drawMF(R, h, T, tip, ax);
+    if (this.state.view === 'bk' && this.state.bkData) this.drawBK(R, h, T, tip, ax);
+    if (this.state.view === 'mk' && this.state.mkData) this.drawMK(R, h, T, tip, ax);
+  }
+
+  drawMF(R, h, T, tip, ax) {
+    const res = this.state.mfData.results;
+    // histogram 20 bins
+    const bins = Array.from({length:20}, (_,i)=>({ x:(i*5)+'%', center:(i+0.5)/20, count:0 }));
+    res.forEach(r => { const idx = Math.min(19, Math.floor(r.churn_probability*20)); bins[idx].count++; });
+    bins.forEach(b => b.tier = b.center>=0.6?'high':b.center>=0.3?'medium':'low');
+    const histRoot = this.ensureRoot(this.mfHist.current);
+    if (histRoot) histRoot.render(
+      h(R.ResponsiveContainer,{width:'100%',height:'100%'},
+        h(R.BarChart,{data:bins,margin:{top:8,right:8,left:-14,bottom:0}},
+          h(R.CartesianGrid,{strokeDasharray:'3 3',stroke:T.grid,vertical:false}),
+          h(R.XAxis,{dataKey:'x',interval:3,...ax}),
+          h(R.YAxis,{...ax}),
+          h(R.Tooltip,{...tip,formatter:(v)=>[v,'tenants']}),
+          h(R.Bar,{dataKey:'count',radius:[3,3,0,0],animationDuration:700},
+            bins.map((b,i)=>h(R.Cell,{key:i,fill:this.tierColor(b.tier)})))
+        )));
+    // donut
+    const counts = { low:0, medium:0, high:0 };
+    res.forEach(r => counts[r.risk_tier]++);
+    const pie = [{name:'Low',value:counts.low,c:'#16a34a'},{name:'Medium',value:counts.medium,c:'#f59e0b'},{name:'High',value:counts.high,c:'#dc2626'}];
+    const donutRoot = this.ensureRoot(this.mfDonut.current);
+    if (donutRoot) donutRoot.render(
+      h(R.ResponsiveContainer,{width:'100%',height:'100%'},
+        h(R.PieChart,null,
+          h(R.Tooltip,{...tip,formatter:(v,n)=>[v+' tenants',n]}),
+          h(R.Pie,{data:pie,dataKey:'value',nameKey:'name',cx:'50%',cy:'50%',innerRadius:62,outerRadius:96,paddingAngle:2,stroke:'none',animationDuration:700},
+            pie.map((p,i)=>h(R.Cell,{key:i,fill:p.c}))),
+          h('text',{x:'50%',y:'47%',textAnchor:'middle',fill:T.text,fontSize:26,fontWeight:700,fontFamily:"'JetBrains Mono',monospace"},String(res.length)),
+          h('text',{x:'50%',y:'57%',textAnchor:'middle',fill:T.tick,fontSize:11},'scored')
+        )));
+    // top 15
+    const top = [...res].sort((a,b)=>b.churn_probability-a.churn_probability).slice(0,15)
+      .map(r=>({ name:r.full_name, p:r.churn_probability }));
+    const maxP = top.length?top[0].p:1;
+    const topRoot = this.ensureRoot(this.mfTop.current);
+    if (topRoot) topRoot.render(
+      h(R.ResponsiveContainer,{width:'100%',height:'100%'},
+        h(R.BarChart,{data:top,layout:'vertical',margin:{top:4,right:40,left:8,bottom:4}},
+          h(R.CartesianGrid,{strokeDasharray:'3 3',stroke:T.grid,horizontal:false}),
+          h(R.XAxis,{type:'number',domain:[0,1],tickFormatter:(v)=>Math.round(v*100)+'%',...ax}),
+          h(R.YAxis,{type:'category',dataKey:'name',width:130,tick:{fill:T.tick,fontSize:11},axisLine:false,tickLine:false}),
+          h(R.Tooltip,{...tip,formatter:(v)=>[(v*100).toFixed(1)+'%','move-out prob']}),
+          h(R.Bar,{dataKey:'p',radius:[0,4,4,0],animationDuration:700},
+            top.map((t,i)=>{ const f=t.p/maxP; const g=Math.round(165-105*f); return h(R.Cell,{key:i,fill:`rgb(220,${g},${g})`}); }),
+            h(R.LabelList,{dataKey:'p',position:'right',formatter:(v)=>(v*100).toFixed(0)+'%',fill:T.tick,fontSize:11,fontFamily:"'JetBrains Mono',monospace"}))
+        )));
+  }
+
+  drawBK(R, h, T, tip, ax) {
+    const d = this.state.bkData;
+    const data = d.history.map(p=>({ date:p.snapshot_date.slice(2), p:p.conversion_probability }));
+    const rules = d.current_rules_score.Probability;
+    const lineRoot = this.ensureRoot(this.bkLine.current);
+    if (lineRoot) lineRoot.render(
+      h(R.ResponsiveContainer,{width:'100%',height:'100%'},
+        h(R.AreaChart,{data,margin:{top:8,right:16,left:-14,bottom:0}},
+          h('defs',null,h('linearGradient',{id:'bkGrad',x1:0,y1:0,x2:0,y2:1},
+            h('stop',{offset:'0%',stopColor:T.accent,stopOpacity:0.45}),
+            h('stop',{offset:'100%',stopColor:T.accent,stopOpacity:0.02}))),
+          h(R.ReferenceArea,{y1:0,y2:0.3,fill:'#16a34a',fillOpacity:0.05}),
+          h(R.ReferenceArea,{y1:0.3,y2:0.6,fill:'#f59e0b',fillOpacity:0.05}),
+          h(R.ReferenceArea,{y1:0.6,y2:1,fill:'#dc2626',fillOpacity:0.05}),
+          h(R.CartesianGrid,{strokeDasharray:'3 3',stroke:T.grid,vertical:false}),
+          h(R.XAxis,{dataKey:'date',...ax}),
+          h(R.YAxis,{domain:[0,1],tickFormatter:(v)=>Math.round(v*100)+'%',...ax}),
+          h(R.Tooltip,{...tip,formatter:(v)=>[(v*100).toFixed(1)+'%','conversion prob']}),
+          h(R.ReferenceLine,{y:rules,stroke:'#94a3b8',strokeDasharray:'5 4',strokeWidth:1.5,label:{value:'rules '+(rules*100).toFixed(0)+'%',fill:'#94a3b8',fontSize:11,position:'insideTopRight'}}),
+          h(R.Area,{type:'monotone',dataKey:'p',stroke:T.accent,strokeWidth:2.5,fill:'url(#bkGrad)',dot:{r:3,fill:T.accent,strokeWidth:0},activeDot:{r:5},animationDuration:700})
+        )));
+  }
+
+  drawMK(R, h, T, tip, ax) {
+    const d = this.state.mkData;
+    const marketRoot = this.ensureRoot(this.mkMarket.current);
+    if (marketRoot) marketRoot.render(
+      h(R.ResponsiveContainer,{width:'100%',height:'100%'},
+        h(R.BarChart,{data:d.by_market,margin:{top:18,right:8,left:-14,bottom:0}},
+          h(R.CartesianGrid,{strokeDasharray:'3 3',stroke:T.grid,vertical:false}),
+          h(R.XAxis,{dataKey:'Market',...ax}),
+          h(R.YAxis,{tickFormatter:(v)=>Math.round(v*100)+'%',...ax}),
+          h(R.Tooltip,{...tip,formatter:(v)=>[(v*100).toFixed(1)+'%','avg win prob']}),
+          h(R.Bar,{dataKey:'avg_win_prob',radius:[4,4,0,0],animationDuration:700},
+            d.by_market.map((m,i)=>h(R.Cell,{key:i,fill:[T.accent,'#8b5cf6','#22c55e'][i%3]})),
+            h(R.LabelList,{dataKey:'n',position:'top',formatter:(v)=>'n='+v,fill:T.tick,fontSize:11,fontFamily:"'JetBrains Mono',monospace"}))
+        )));
+    const decRoot = this.ensureRoot(this.mkDecile.current);
+    if (decRoot) decRoot.render(
+      h(R.ResponsiveContainer,{width:'100%',height:'100%'},
+        h(R.BarChart,{data:d.decile_distribution,margin:{top:8,right:8,left:-14,bottom:0}},
+          h(R.CartesianGrid,{strokeDasharray:'3 3',stroke:T.grid,vertical:false}),
+          h(R.XAxis,{dataKey:'Decile',...ax}),
+          h(R.YAxis,{...ax}),
+          h(R.Tooltip,{...tip,formatter:(v)=>[v,'companies']}),
+          h(R.Bar,{dataKey:'n',radius:[3,3,0,0],animationDuration:700},
+            d.decile_distribution.map((x,i)=>{ const f=i/9; const l=Math.round(70-22*f); return h(R.Cell,{key:i,fill:`hsl(217,80%,${l}%)`}); }))
+        )));
+  }
+
+  // ---------- derive view data for template ----------
+  navBtn(active) {
+    return `width:100%;display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;cursor:pointer;font-family:inherit;text-align:left;border:1px solid ${active?'var(--border,rgba(255,255,255,.08))':'transparent'};background:${active?'var(--panel2,#1e1e21)':'transparent'};color:var(--text,#ededef);transition:background .15s;`;
+  }
+
+  renderVals() {
+    const s = this.state;
+    const A = s.anim;
+    const T = this.theme();
+    const ready = !s.loading && !!(s.view==='mf'?s.mfData:s.view==='bk'?s.bkData:s.mkData);
+
+    const nav = [
+      { key:'mf', icon:'M', iconBg:'color-mix(in srgb,#5b8def 18%,transparent)', iconColor:'#7aa5f5', title:'Multifamily', sub:'Tenant Move-Out Risk' },
+      { key:'bk', icon:'B', iconBg:'color-mix(in srgb,#8b5cf6 18%,transparent)', iconColor:'#a78bfa', title:'Brokerage', sub:'Prospect Conversion' },
+      { key:'mk', icon:'A', iconBg:'color-mix(in srgb,#22c55e 18%,transparent)', iconColor:'#4ade80', title:'Marketing', sub:'Cohort & Industry Analytics' },
+    ];
+    const navItems = nav.map(n=>({ ...n, style:this.navBtn(s.view===n.key), onClick:()=>this.switchView(n.key) }));
+
+    const headers = {
+      mf:{ k:'Multifamily', t:'Tenant Move-Out Risk', d:'Score tenants by likelihood of moving out at lease end. Prioritize retention outreach using calibrated churn probabilities from the shared LightGBM model.' },
+      bk:{ k:'Brokerage · Signal Desk', t:'Prospect Conversion', d:'Track a company\u2019s modeled conversion probability across snapshots and compare it against the current rules-based score.' },
+      mk:{ k:'Marketing', t:'Cohort & Industry Analytics', d:'Aggregate win probability across markets, deciles, verticals and size bands to find the highest-yield segments.' },
+    };
+    const hd = headers[s.view];
+
+    const runBtnStyle = `padding:10px 22px;border-radius:10px;border:none;cursor:${s.loading?'wait':'pointer'};font-family:inherit;font-size:13px;font-weight:600;color:#fff;background:linear-gradient(135deg,#5b8def,#6366f1);box-shadow:0 2px 12px rgba(91,141,239,.35);opacity:${s.loading?0.6:1};transition:opacity .15s,transform .1s;`;
+
+    const out = {
+      themeVars: this.themeVars(),
+      navItems,
+      toggleTheme: () => this.setState({ dark: !s.dark }),
+      themeLabel: s.dark ? 'Dark theme' : 'Light theme',
+      themeIcon: s.dark ? '\u25D2' : '\u2600',
+      viewKicker: hd.k, viewTitle: hd.t, viewDesc: hd.d,
+      isMF: s.view==='mf', isBK: s.view==='bk', isMK: s.view==='mk',
+      loading: s.loading, ready,
+      runBtnStyle,
+      runLabel: s.loading ? 'Running\u2026' : 'Run prediction',
+      resultCaption: `model: v0-standin (interim) \u00b7 source: real \u00b7 ${new Date().toISOString().slice(0,10)}`,
+      // refs
+      mfHistRef:this.mfHist, mfDonutRef:this.mfDonut, mfTopRef:this.mfTop,
+      bkLineRef:this.bkLine, mkMarketRef:this.mkMarket, mkDecileRef:this.mkDecile,
+    };
+
+    // ---- MULTIFAMILY ----
+    if (s.view==='mf') {
+      out.buildingChips = this.BUILDINGS.map(name=>{
+        const active = s.selBuildings.includes(name);
+        return { name, onClick:()=>{
+            const set = new Set(s.selBuildings);
+            set.has(name)?set.delete(name):set.add(name);
+            this.setState({ selBuildings:[...set] });
+          },
+          style:`padding:7px 13px;border-radius:999px;cursor:pointer;font-family:inherit;font-size:12px;font-weight:500;transition:all .15s;border:1px solid ${active?'transparent':'var(--border,rgba(255,255,255,.08))'};background:${active?'color-mix(in srgb,#5b8def 20%,transparent)':'var(--panel2,#1e1e21)'};color:${active?'#9bbbf7':'var(--muted,#8e8e96)'};` };
+      });
+      out.asOf=s.asOf; out.maxUnits=s.maxUnits;
+      out.setAsOf=(e)=>this.setState({asOf:e.target.value});
+      out.setMaxUnits=(e)=>this.setState({maxUnits:+e.target.value});
+      out.runMF=()=>this.runMF();
+
+      if (s.mfData) {
+        const res = s.mfData.results;
+        const mean = res.reduce((a,r)=>a+r.churn_probability,0)/(res.length||1);
+        const high = res.filter(r=>r.risk_tier==='high').length;
+        const notice = res.filter(r=>r.has_notice).length;
+        out.kpis = [
+          { label:'Units scored', display:Math.round(res.length*A).toLocaleString(), color:'var(--text,#ededef)', sub:`${s.selBuildings.length} buildings` },
+          { label:'Mean move-out prob', display:(mean*A*100).toFixed(1)+'%', color:'var(--text,#ededef)', sub:'across scored units' },
+          { label:'High-risk count', display:Math.round(high*A).toLocaleString(), color:'#dc2626', sub:`${res.length?Math.round(high/res.length*100):0}% of portfolio` },
+          { label:'Tenants w/ notice filed', display:Math.round(notice*A).toLocaleString(), color:'#f59e0b', sub:'formal move-out notice' },
+        ];
+        const cols = [
+          {key:'scode',label:'Tenant',al:'left'},{key:'property',label:'Property',al:'left'},{key:'unit',label:'Unit',al:'left'},
+          {key:'churn_probability',label:'Move-out prob',al:'right'},{key:'risk_tier',label:'Tier',al:'left'},
+          {key:'has_notice',label:'Notice',al:'left'},{key:'actual_churn',label:'Actual',al:'center'},
+        ];
+        out.mfCols = cols.map(c=>({ label:c.label, arrow: s.sortKey===c.key?(s.sortDir==='asc'?' \u2191':' \u2193'):'',
+          onClick:()=>this.setState(p=>({ sortKey:c.key, sortDir: p.sortKey===c.key && p.sortDir==='desc'?'asc':'desc' })),
+          style:`text-align:${c.al};padding:11px 16px;font-size:11px;font-weight:600;color:var(--muted,#8e8e96);cursor:pointer;user-select:none;white-space:nowrap;` }));
+        const dir = s.sortDir==='asc'?1:-1;
+        const sorted = [...res].sort((a,b)=>{ const x=a[s.sortKey],y=b[s.sortKey]; return (x<y?-1:x>y?1:0)*dir; });
+        out.tableCount = res.length;
+        out.mfRows = sorted.slice(0,200).map(r=>({
+          scode:r.scode, property:r.property, unit:r.unit,
+          prob:(r.churn_probability*100).toFixed(1)+'%',
+          tier:r.risk_tier, tierStyle:this.tierBadge(r.risk_tier),
+          notice: r.has_notice? 'Filed':'\u2014',
+          noticeStyle: r.has_notice? 'display:inline-block;padding:2px 9px;border-radius:6px;font-size:11px;font-weight:600;color:#f59e0b;background:color-mix(in srgb,#f59e0b 14%,transparent);' : 'color:var(--muted,#8e8e96);',
+          actual: r.actual_churn? 'Yes':'No',
+        }));
+      }
+    }
+
+    // ---- BROKERAGE ----
+    if (s.view==='bk') {
+      out.bkQuery=s.bkQuery; out.bkCompany=s.bkCompany;
+      out.setBkQuery=(e)=>this.setState({bkQuery:e.target.value});
+      out.setBkCompany=(e)=>this.setState({bkCompany:e.target.value,bkQuery:''});
+      out.runBK=()=>this.runBK();
+      out.bkCompanyOpts = s.bkCompanies.map(c=>({ value:String(c.hMy), label:`${c.display_name} \u00b7 ${c.snapshots} snapshots` }));
+
+      if (s.bkData) {
+        const d = s.bkData;
+        const last = d.history[d.history.length-1].conversion_probability;
+        out.bkName=d.company.display_name; out.bkHMy=d.company.hMy; out.bkMarket=d.company.market; out.bkIndustry=d.company.industry;
+        out.kpis = [
+          { label:'Latest model probability', display:(last*A*100).toFixed(1)+'%', color:this.tierColor(last>=0.6?'high':last>=0.3?'medium':'low'), sub:'most recent snapshot' },
+          { label:'History points', display:Math.round(d.history.length*A).toLocaleString(), color:'var(--text,#ededef)', sub:'monthly snapshots' },
+          { label:'Current rules probability', display:(d.current_rules_score.Probability*A*100).toFixed(1)+'%', color:'var(--text,#ededef)', sub:`scored ${d.current_rules_score.ScoredAt}` },
+          { label:'Rules decile', display:Math.round(d.current_rules_score.Decile*A).toString(), color:'var(--accent,#5b8def)', sub:'1 = lowest, 10 = highest' },
+        ];
+        out.bkRows = [...d.history].reverse().map(p=>({ date:p.snapshot_date, prob:(p.conversion_probability*100).toFixed(1)+'%', tier:p.risk_tier, tierStyle:this.tierBadge(p.risk_tier) }));
+        out.bkStrip = d.history.map(p=>({ title:`${p.snapshot_date} \u00b7 ${(p.conversion_probability*100).toFixed(1)}% (${p.risk_tier})`, style:`flex:1;background:${this.tierColor(p.risk_tier)};opacity:.85;` }));
+        out.bkStripStart = d.history[0].snapshot_date;
+        out.bkStripEnd = d.history[d.history.length-1].snapshot_date;
+      }
+    }
+
+    // ---- MARKETING ----
+    if (s.view==='mk') {
+      const opts = s.mkMode==='cohort' ? (this.api?this.api.MK_COHORTS:[]) : (this.api?this.api.MK_INDUSTRIES:[]);
+      out.mkOpts = opts;
+      out.mkKey = s.mkKey;
+      out.mkOptLabel = s.mkMode==='cohort' ? 'Cohort' : 'Industry';
+      out.mkRunLabel = s.loading ? 'Aggregating\u2026' : 'Aggregate';
+      const tab = (active)=>`padding:7px 18px;border-radius:8px;border:none;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600;background:${active?'var(--accent,#5b8def)':'transparent'};color:${active?'#fff':'var(--muted,#8e8e96)'};transition:all .15s;`;
+      out.cohortTabStyle = tab(s.mkMode==='cohort');
+      out.industryTabStyle = tab(s.mkMode==='industry');
+      out.setCohortMode = ()=>this.setState({ mkMode:'cohort', mkKey:(this.api?this.api.MK_COHORTS[0]:'healthcare-vertical') });
+      out.setIndustryMode = ()=>this.setState({ mkMode:'industry', mkKey:(this.api?this.api.MK_INDUSTRIES[0]:'Banking') });
+      out.setMkKey = (e)=>this.setState({ mkKey:e.target.value });
+      out.runMK = ()=>this.runMK();
+
+      if (s.mkData) {
+        const d = s.mkData;
+        const totalN = d.by_market.reduce((a,m)=>a+m.n,0);
+        const avgProb = d.by_market.reduce((a,m)=>a+m.avg_win_prob*m.n,0)/(totalN||1);
+        const markets = d.by_market.filter(m=>m.n>0).length;
+        out.kpis = [
+          { label:'Companies in segment', display:Math.round(totalN*A).toLocaleString(), color:'var(--text,#ededef)', sub:s.mkKey },
+          { label:'Average probability', display:(avgProb*A*100).toFixed(1)+'%', color:'var(--accent,#5b8def)', sub:'weighted win prob' },
+          { label:'Markets covered', display:Math.round(markets*A).toString(), color:'var(--text,#ededef)', sub:'DSM · OMA · OTHER' },
+        ];
+        // heatmap
+        const bands = this.api.SIZE_BAND_ORDER;
+        const verts = this.api.VERTICAL_ORDER;
+        const grid = {};
+        let maxWR = 0;
+        d.cohort_win_rates.forEach(c=>{ grid[c.Vertical+'|'+c.SizeBand]=c; if(c.WinRate>maxWR)maxWR=c.WinRate; });
+        out.heatCols = bands;
+        out.heatMax = (maxWR*100).toFixed(0)+'%';
+        out.heatRows = verts.map(v=>({
+          label:v.replace('-',' '),
+          cells: bands.map(b=>{ const c=grid[v+'|'+b]; const wr=c?c.WinRate:0; const a=maxWR?wr/maxWR:0;
+            return { val:(wr*100).toFixed(0)+'%', title:`${v} \u00b7 ${b}: ${(wr*100).toFixed(1)}% win \u00b7 ${c?c.DealCount:0} deals`,
+              style:`height:46px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;font-family:'JetBrains Mono',monospace;background:color-mix(in srgb,#16a34a ${Math.round(a*88+6)}%,var(--panel2,#1e1e21));color:${a>0.55?'#fff':'var(--text,#ededef)'};` }; }),
+        }));
+        // cohort bars
+        const maxDeals = Math.max(...d.cohort_win_rates.map(c=>c.DealCount));
+        out.cohortBars = [...d.cohort_win_rates].sort((a,b)=>b.WinRate-a.WinRate).slice(0,10).map(c=>{
+          const wPct = Math.round((c.DealCount/maxDeals)*100*A);
+          const f = maxWR?c.WinRate/maxWR:0;
+          return { label:`${c.Vertical.replace('-',' ')} \u00b7 ${c.SizeBand}`, deals:c.DealCount, rate:(c.WinRate*100).toFixed(1)+'%',
+            barStyle:`height:100%;width:${wPct}%;border-radius:6px;background:linear-gradient(90deg,color-mix(in srgb,#16a34a ${Math.round(40+f*40)}%,transparent),#16a34a);transition:width .4s;` };
+        });
+      }
+    }
+
+    return out;
+  }
+}
+</script>
+</body>
+</html>

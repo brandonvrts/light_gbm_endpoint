@@ -1,0 +1,10 @@
+{
+  "contract": "signal-desk-brokerage",
+  "version": "v0-standin",
+  "feature_count": 37,
+  "source": "real",
+  "n_train": 8000,
+  "train_auc": 0.993,
+  "trained_at": "20260623_112322",
+  "note": "INTERIM. Real CRE model is data-blocked (few positive labels)."
+}

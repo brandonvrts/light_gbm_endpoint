@@ -1,0 +1,1 @@
+{"ts": "2026-07-07T14:10:13", "contract": "signal_desk_brokerage", "incumbent": "v0.3-corrected-logistic", "incumbent_metric": 0.1082, "candidate": "v0.3-cand-20260707_140956", "metric_name": "rolling-origin PR-AUC", "candidate_metric": 0.1082, "decision": "PROMOTE", "reason": "0.1082 >= 0.1082-0.01 (no regression)", "dry_run": false, "default_now": "v0.3-cand-20260707_140956"}

@@ -1,0 +1,10 @@
+{
+  "contract": "multifamily-churn",
+  "version": "v0-standin",
+  "feature_count": 45,
+  "source": "real",
+  "n_train": 1175,
+  "train_auc": 0.993,
+  "trained_at": "20260623_112322",
+  "note": "INTERIM stand-in. Drop the real churn_model_v4_*.joblib into a new version dir and point default.txt to promote it."
+}

@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RTS Prediction Hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/prop-types@15/prop-types.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--scroll,#2a2a2e); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  @keyframes rtsPulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+  @keyframes rtsShimmer { 0%{background-position:-400px 0} 100%{background-position:400px 0} }
+  .rts-skel { background: linear-gradient(90deg, var(--panel2,#1e1e21) 0px, var(--border,#2a2a2e) 200px, var(--panel2,#1e1e21) 400px); background-size: 800px 100%; animation: rtsShimmer 1.3s infinite linear; border-radius: 10px; }
+  body { font-family:'Inter Tight',system-ui,sans-serif; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>window.__GBME_KEY__ = "__GBME_API_KEY__";</script>
+<script type="text/plain" id="app-src">
+const { useState, useEffect, useRef } = React;
+const RC = window.Recharts;
+const KEY = window.__GBME_KEY__ || "";
+// Resolve an absolute API base so fetch works even when the page is embedded in a
+// sandboxed/srcdoc preview frame (no usable base URL -> relative paths fail to parse).
+// For real LAN users this is just location.origin, so behavior is unchanged.
+const API_BASE = (function(){
+  const ok = (u) => typeof u === "string" && /^https?:\/\//.test(u);
+  try { if (ok(location.origin)) return location.origin; } catch(e){}
+  try { if (ok(document.referrer)) return new URL(document.referrer).origin; } catch(e){}
+  try { if (ok(document.baseURI)) return new URL(document.baseURI).origin; } catch(e){}
+  return "http://localhost:8910";
+})();
+const apiUrl = (path) => API_BASE + path;
+const RISK = { low:'#16a34a', medium:'#f59e0b', high:'#dc2626' };
+const BUILDINGS = ['Country Club Village','Sierra Pointe','Residences at 62W','Winwood'];
+const NAME_TO_ID = { 'Country Club Village':62, 'Sierra Pointe':72, 'Residences at 62W':82, 'Winwood':26 };
+
+async function jpost(path, body){
+  const r = await fetch(apiUrl(path),{method:'POST',headers:{'Content-Type':'application/json','X-API-Key':KEY},body:JSON.stringify(body)});
+  if(!r.ok) throw new Error(path+' -> '+r.status);
+  return r.json();
+}
+async function jget(path){
+  const r = await fetch(apiUrl(path),{headers:{'X-API-Key':KEY}});
+  if(!r.ok) throw new Error(path+' -> '+r.status);
+  return r.json();
+}
+const api = {
+  predictMultifamily: ({buildings, asOf}) => {
+    const ids = (buildings&&buildings.length?buildings:BUILDINGS).map(n=>NAME_TO_ID[n]).filter(Boolean);
+    return jpost('/predict/multifamily-churn', {property_ids:ids, as_of:asOf});  // no limit -> ALL occupied units
+  },
+  multifamilyBacktest: ({buildings, asOf}) => {
+    const ids = (buildings&&buildings.length?buildings:BUILDINGS).map(n=>NAME_TO_ID[n]).filter(Boolean);
+    return jpost('/multifamily/backtest', {property_ids:ids, as_of:asOf, limit:250});  // sampled for speed
+  },
+  listBrokerageCompanies: async () => {
+    const d = await jget('/brokerage/companies?limit=60');
+    return (d.companies||[]).map(c=>({hMy:c.hMy, display_name:c.display_name, snapshots:c.snapshots}));
+  },
+  predictBrokerage: ({companyId, query}) => jpost('/predict/signal-desk-brokerage', {company:String(query||companyId)}),
+  brokerageScorecard: (sort) => jget('/brokerage/scorecard?limit=25&sort='+(sort||'winprob')),
+  aggregateMarketing: ({mode, key}) => jpost('/predict/marketing', {variant:mode, key}),
+  marketingOptions: () => jget('/marketing/options'),
+  models: () => jget('/models'),
+  marketingTargeting: () => jget('/marketing/targeting'),
+};
+
+const pct = (x,d=0)=> (x*100).toFixed(d)+'%';
+const tierColor = (t)=> RISK[t] || '#8e8e96';
+const tierBadge = (t)=>{ const c=tierColor(t); return { display:'inline-block',padding:'3px 10px',borderRadius:999,fontSize:11,fontWeight:600,textTransform:'capitalize',color:c,background:`color-mix(in srgb,${c} 16%,transparent)`,border:`1px solid color-mix(in srgb,${c} 38%,transparent)`}; };
+
+function App(){
+  const [view,setView]=useState('mf');
+  const [dark,setDark]=useState(true);
+  const [loading,setLoading]=useState(false);
+  const [anim,setAnim]=useState(1);
+  // mf
+  const [mfData,setMfData]=useState(null);
+  const [selBuildings,setSelBuildings]=useState([...BUILDINGS]);
+  const [asOf,setAsOf]=useState('2026-06-23');
+  const [mfBacktest,setMfBacktest]=useState(null);
+  const [btLoading,setBtLoading]=useState(false);
+  const [maxUnits,setMaxUnits]=useState(120);
+  const [sortKey,setSortKey]=useState('churn_probability');
+  const [sortDir,setSortDir]=useState('desc');
+  // bk
+  const [bkData,setBkData]=useState(null);
+  const [bkCompanies,setBkCompanies]=useState([]);
+  const [bkCompany,setBkCompany]=useState('1449');
+  const [bkQuery,setBkQuery]=useState('');
+  const [bkScorecard,setBkScorecard]=useState(null);
+  const [bkSort,setBkSort]=useState('winprob');
+  // mk
+  const [mkData,setMkData]=useState(null);
+  const [mkMode,setMkMode]=useState('cohort');
+  const [mkKey,setMkKey]=useState('healthcare-vertical');
+  const [mkCohorts,setMkCohorts]=useState(['healthcare-vertical','growth-mode','tech-vertical','lease-expiring-12mo']);
+  const [mkIndustries,setMkIndustries]=useState(['Banking','Retail','Healthcare','Manufacturing','Technology']);
+  // model validation
+  const [modelCards,setModelCards]=useState(null);
+  const [mkTargeting,setMkTargeting]=useState(null);
+
+  const T = dark
+    ? { grid:'rgba(255,255,255,0.07)', axis:'#6b6b73', tick:'#a8a8b0', accent:'#5b8def', panel:'#161618', text:'#ededef' }
+    : { grid:'rgba(0,0,0,0.07)', axis:'#9aa0a6', tick:'#52525b', accent:'#2563eb', panel:'#ffffff', text:'#18181b' };
+  const V = dark
+    ? {'--bg':'#0a0a0b','--panel':'#161618','--panel2':'#1e1e21','--border':'rgba(255,255,255,.08)','--text':'#ededef','--muted':'#8e8e96','--accent':'#5b8def','--scroll':'#2a2a2e','--scheme':'dark'}
+    : {'--bg':'#f6f6f7','--panel':'#ffffff','--panel2':'#f1f1f3','--border':'rgba(0,0,0,.08)','--text':'#18181b','--muted':'#6b7280','--accent':'#2563eb','--scroll':'#d4d4d8','--scheme':'light'};
+
+  const startTween=()=>{ const t0=performance.now(),dur=750; setAnim(0);
+    const step=(now)=>{ const p=Math.min(1,(now-t0)/dur); setAnim(1-Math.pow(1-p,3)); if(p<1) requestAnimationFrame(step); };
+    requestAnimationFrame(step); };
+
+  const runMF=async()=>{ setLoading(true); try{ const d=await api.predictMultifamily({buildings:selBuildings,asOf}); setMfData(d);}catch(e){setMfData({error:String(e),results:[]});} setLoading(false); startTween(); };
+  const runBacktest=async()=>{ setBtLoading(true); setMfBacktest(null); try{ setMfBacktest(await api.multifamilyBacktest({buildings:selBuildings,asOf})); }catch(e){ setMfBacktest({error:String(e)}); } setBtLoading(false); };
+  const runBK=async()=>{ setLoading(true); try{ const d=await api.predictBrokerage({companyId:bkCompany,query:bkQuery}); setBkData(d); if(d.company) setBkCompany(String(d.company.hMy)); }catch(e){setBkData({error:String(e)});} setLoading(false); startTween(); };
+  const runMK=async()=>{ setLoading(true); try{ const d=await api.aggregateMarketing({mode:mkMode,key:mkKey}); setMkData(d);}catch(e){setMkData({error:String(e)});} setLoading(false); startTween(); };
+  const loadModels=async()=>{ setLoading(true); try{ setModelCards(await api.models()); }catch(e){ setModelCards([{error:String(e)}]); } setLoading(false); };
+  const loadScorecard=async(s)=>{ setBkSort(s); try{ setBkScorecard(await api.brokerageScorecard(s)); }catch(e){} };
+
+  useEffect(()=>{ (async()=>{
+    try{ setBkCompanies(await api.listBrokerageCompanies()); }catch(e){}
+    try{ setBkScorecard(await api.brokerageScorecard('winprob')); }catch(e){}
+    try{ const o=await api.marketingOptions();
+      const cohorts=(o.cohorts||[]).map(c=>c.ConceptKey).filter(Boolean);
+      const inds=(o.industries||[]).map(i=>i.industry).filter(Boolean);
+      if(cohorts.length) setMkCohorts(cohorts);
+      if(inds.length) setMkIndustries(inds);
+    }catch(e){}
+    try{ setMkTargeting(await api.marketingTargeting()); }catch(e){}
+    runMF();
+  })(); },[]);
+
+  const switchView=(v)=>{ setView(v); if(v==='bk'&&!bkData) runBK(); if(v==='mk'&&!mkData) runMK(); if(v==='mv'&&!modelCards) loadModels(); };
+
+  const ready = !loading && !!(view==='mf'?mfData:view==='bk'?bkData:view==='mk'?mkData:modelCards);
+  const headers = {
+    mf:{k:'Multifamily',t:'Tenant Move-Out Risk',d:'Score tenants by likelihood of moving out at lease end. Prioritize retention outreach using calibrated churn probabilities from the shared LightGBM model.'},
+    bk:{k:'Brokerage · Signal Desk',t:'Prospect Conversion',d:'Track a company’s modeled conversion probability across snapshots and compare it against the current rules-based score.'},
+    mk:{k:'Marketing',t:'Cohort & Industry Analytics',d:'Aggregate win probability across markets, deciles, verticals and size bands to find the highest-yield segments.'},
+    mv:{k:'Model validation',t:'Model Validation & Metrics',d:'Training design, discrimination (ROC-AUC variants), Brier / log loss, and calibration internals for every served model — for the technical sector.'},
+  }[view];
+  const activeData = view==='mf'?mfData:view==='bk'?bkData:view==='mk'?mkData:null;
+  const modelVersion = (activeData&&activeData.model_version)||'—';
+  const modelSource = (activeData&&activeData.model_source)||'—';
+  const isInterim = modelSource!=='real-production';
+  const asOfStr = (activeData&&activeData.as_of)||(activeData&&activeData.data_as_of)||new Date().toISOString().slice(0,10);
+  const caption = `model: ${modelVersion} · ${isInterim?'interim stand-in':'real / validated'} · data as-of ${asOfStr}`;
+
+  // shared styles
+  const card = {padding:'18px 20px',borderRadius:14,border:'1px solid var(--border)',background:'var(--panel)'};
+  const chartCard = {...card,padding:'18px 20px 8px'};
+  const runBtn = {padding:'10px 22px',borderRadius:10,border:'none',cursor:loading?'wait':'pointer',fontFamily:'inherit',fontSize:13,fontWeight:600,color:'#fff',background:'linear-gradient(135deg,#5b8def,#6366f1)',boxShadow:'0 2px 12px rgba(91,141,239,.35)',opacity:loading?0.6:1,transition:'opacity .15s'};
+  const lbl = {fontSize:11,fontWeight:600,color:'var(--muted)',marginBottom:8};
+  const tip = { contentStyle:{background:T.panel,border:`1px solid ${T.grid}`,borderRadius:10,fontSize:12,color:T.text,fontFamily:"'Inter Tight',sans-serif"}, cursor:{fill:'rgba(127,127,140,0.08)'}, itemStyle:{color:T.text}, labelStyle:{color:T.tick} };
+  const axTick = {fill:T.tick,fontSize:11,fontFamily:"'JetBrains Mono',monospace"};
+  const axisLine = {stroke:T.grid};
+
+  const KPI = ({label,display,color,sub}) => (
+    <div style={card}>
+      <div style={{fontSize:11.5,fontWeight:600,color:'var(--muted)',marginBottom:10}}>{label}</div>
+      <div style={{fontSize:30,fontWeight:700,letterSpacing:'-.02em',fontFamily:"'JetBrains Mono',monospace",color:color||'var(--text)'}}>{display}</div>
+      <div style={{fontSize:11.5,color:'var(--muted)',marginTop:6}}>{sub}</div>
+    </div>
+  );
+  const Skel = ({h}) => <div className="rts-skel" style={{height:h}}></div>;
+
+  // ---------------- chart builders ----------------
+  function MFCharts(){
+    const res=mfData.results;
+    const bins=Array.from({length:20},(_,i)=>({x:(i*5)+'%',center:(i+0.5)/20,count:0}));
+    res.forEach(r=>{const idx=Math.min(19,Math.floor(r.churn_probability*20)); bins[idx].count++;});
+    const TT=(mfData.tier_thresholds)||{low_max:0.25,medium_max:0.45};
+    bins.forEach(b=>b.tier=b.center>=TT.medium_max?'high':b.center>=TT.low_max?'medium':'low');
+    const counts={low:0,medium:0,high:0}; res.forEach(r=>counts[r.risk_tier]=(counts[r.risk_tier]||0)+1);
+    const pie=[{name:'Low',value:counts.low,c:RISK.low},{name:'Medium',value:counts.medium,c:RISK.medium},{name:'High',value:counts.high,c:RISK.high}];
+    const top=[...res].sort((a,b)=>b.churn_probability-a.churn_probability).slice(0,15).map(r=>({name:r.full_name||r.scode,p:r.churn_probability}));
+    const maxP=top.length?top[0].p:1;
+    return (<>
+      <div style={{display:'grid',gridTemplateColumns:'1.4fr 1fr',gap:16,marginBottom:16}}>
+        <div style={chartCard}>
+          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}><div style={{fontSize:13.5,fontWeight:600}}>Move-out probability distribution</div><div style={{fontSize:11,color:'var(--muted)'}}>20 bins · colored by risk tier</div></div>
+          <div style={{height:280}}><RC.ResponsiveContainer width="100%" height="100%">
+            <RC.BarChart data={bins} margin={{top:8,right:8,left:-14,bottom:0}}>
+              <RC.CartesianGrid strokeDasharray="3 3" stroke={T.grid} vertical={false}/>
+              <RC.XAxis dataKey="x" interval={3} tick={axTick} axisLine={axisLine} tickLine={false}/>
+              <RC.YAxis tick={axTick} axisLine={axisLine} tickLine={false}/>
+              <RC.Tooltip {...tip} formatter={(v)=>[v,'tenants']}/>
+              <RC.Bar dataKey="count" radius={[3,3,0,0]} animationDuration={700}>{bins.map((b,i)=><RC.Cell key={i} fill={tierColor(b.tier)}/>)}</RC.Bar>
+            </RC.BarChart></RC.ResponsiveContainer></div>
+        </div>
+        <div style={chartCard}>
+          <div style={{fontSize:13.5,fontWeight:600,marginBottom:6}}>Risk-tier breakdown</div>
+          <div style={{height:280}}><RC.ResponsiveContainer width="100%" height="100%">
+            <RC.PieChart>
+              <RC.Tooltip {...tip} formatter={(v,n)=>[v+' tenants',n]}/>
+              <RC.Pie data={pie} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={62} outerRadius={96} paddingAngle={2} stroke="none" animationDuration={700}>{pie.map((p,i)=><RC.Cell key={i} fill={p.c}/>)}</RC.Pie>
+              <text x="50%" y="47%" textAnchor="middle" fill={T.text} fontSize={26} fontWeight={700} fontFamily="'JetBrains Mono',monospace">{String(res.length)}</text>
+              <text x="50%" y="57%" textAnchor="middle" fill={T.tick} fontSize={11}>scored</text>
+            </RC.PieChart></RC.ResponsiveContainer></div>
+          <div style={{display:'flex',justifyContent:'center',gap:16,marginTop:2}}>
+            {[['Low',RISK.low],['Medium',RISK.medium],['High',RISK.high]].map(([n,c])=>(
+              <span key={n} style={{display:'flex',alignItems:'center',gap:6,fontSize:11.5,color:'var(--muted)'}}><span style={{width:9,height:9,borderRadius:2,background:c}}></span>{n}</span>))}
+          </div>
+        </div>
+      </div>
+      <div style={{...chartCard,marginBottom:16}}>
+        <div style={{fontSize:13.5,fontWeight:600,marginBottom:6}}>Top 15 at-risk tenants</div>
+        <div style={{height:380}}><RC.ResponsiveContainer width="100%" height="100%">
+          <RC.BarChart data={top} layout="vertical" margin={{top:4,right:40,left:8,bottom:4}}>
+            <RC.CartesianGrid strokeDasharray="3 3" stroke={T.grid} horizontal={false}/>
+            <RC.XAxis type="number" domain={[0,1]} tickFormatter={(v)=>Math.round(v*100)+'%'} tick={axTick} axisLine={axisLine} tickLine={false}/>
+            <RC.YAxis type="category" dataKey="name" width={130} tick={{fill:T.tick,fontSize:11}} axisLine={false} tickLine={false}/>
+            <RC.Tooltip {...tip} formatter={(v)=>[(v*100).toFixed(1)+'%','move-out prob']}/>
+            <RC.Bar dataKey="p" radius={[0,4,4,0]} animationDuration={700}>
+              {top.map((t,i)=>{const f=t.p/maxP; const g=Math.round(165-105*f); return <RC.Cell key={i} fill={`rgb(220,${g},${g})`}/>;})}
+              <RC.LabelList dataKey="p" position="right" formatter={(v)=>(v*100).toFixed(0)+'%'} fill={T.tick} fontSize={11} fontFamily="'JetBrains Mono',monospace"/>
+            </RC.Bar>
+          </RC.BarChart></RC.ResponsiveContainer></div>
+      </div>
+    </>);
+  }
+
+  function BKScorecard(){
+    const d=bkScorecard; if(!d||!d.companies||!d.companies.length) return null;
+    const mono="'JetBrains Mono',monospace";
+    const sorts=[['winprob','Win prob'],['value','Exp. value'],['scoops','Scoop momentum'],['recency','Recency'],['lease','Lease soonest'],['score','REA score']];
+    return (<div style={{...card,marginBottom:22}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10,marginBottom:12}}>
+        <div style={{fontSize:14,fontWeight:700}}>Company ranking · who to pursue <span style={{fontSize:11,fontWeight:400,color:'var(--muted)'}}>— company-centric (broker-free), live</span></div>
+        <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+          {sorts.map(([k,lab])=>(<button key={k} onClick={()=>loadScorecard(k)} style={{padding:'5px 11px',borderRadius:7,border:'1px solid var(--border)',cursor:'pointer',fontFamily:'inherit',fontSize:11,fontWeight:600,background:bkSort===k?'var(--accent)':'transparent',color:bkSort===k?'#fff':'var(--muted)',transition:'all .15s'}}>{lab}</button>))}
+        </div>
+      </div>
+      <div style={{overflowX:'auto',maxHeight:360,overflowY:'auto'}}>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+          <thead style={{position:'sticky',top:0,background:'var(--panel)'}}><tr>
+            {['#','Company','Mkt','Win prob','Cohort wr','Lift','Exp. value','Scoops 90d','Lease mo','Lifecycle'].map(h=><th key={h} style={{textAlign:'left',padding:'8px 12px',fontSize:10.5,fontWeight:600,color:'var(--muted)',whiteSpace:'nowrap'}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {d.companies.map((c,i)=>(<tr key={i} style={{borderTop:'1px solid var(--border)'}}>
+              <td style={{padding:'8px 12px',color:'var(--muted)'}}>{i+1}</td>
+              <td style={{padding:'8px 12px',fontWeight:600,whiteSpace:'nowrap'}}>{c.company||('company '+c.company_id)}</td>
+              <td style={{padding:'8px 12px',color:'var(--muted)'}}>{c.market}</td>
+              <td style={{padding:'8px 12px',fontFamily:mono,fontWeight:600,color:'#5b8def'}}>{((c.win_prob||0)*100).toFixed(1)}%</td>
+              <td style={{padding:'8px 12px',fontFamily:mono}}>{((c.cohort_win_rate||0)*100).toFixed(1)}%</td>
+              <td style={{padding:'8px 12px',fontFamily:mono}}>{(c.concept_lift||1).toFixed(2)}×</td>
+              <td style={{padding:'8px 12px',fontFamily:mono}}>{c.expected_value?'$'+Math.round(c.expected_value).toLocaleString():'—'}</td>
+              <td style={{padding:'8px 12px',fontFamily:mono}}>{c.scoop_count_90d!=null?c.scoop_count_90d:'—'}</td>
+              <td style={{padding:'8px 12px',fontFamily:mono}}>{c.months_to_lease_end!=null?c.months_to_lease_end:'—'}</td>
+              <td style={{padding:'8px 12px',textTransform:'capitalize',color:'var(--muted)'}}>{c.lifecycle||'—'}</td>
+            </tr>))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{fontSize:11,color:'var(--muted)',marginTop:8}}>WinProb = cohort base × concept lift; Exp. value = WinProb × cohort value. All live from rea.CompanyScoreSnapshot — no broker feature.</div>
+    </div>);
+  }
+
+  function BKChart(){
+    const d=bkData; if(!d.history) return null;
+    const data=d.history.map(p=>({date:(p.snapshot_date||'').slice(2),p:p.conversion_probability}));
+    const rules=(d.current_rules_score&&d.current_rules_score.Probability)||0;
+    return (<div style={{...chartCard,marginBottom:16}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+        <div style={{fontSize:13.5,fontWeight:600}}>Conversion probability over time</div>
+        <div style={{display:'flex',gap:14,alignItems:'center',fontSize:11,color:'var(--muted)'}}><span style={{display:'flex',alignItems:'center',gap:6}}><span style={{width:16,height:2,background:'var(--accent)',display:'inline-block'}}></span>model</span><span style={{display:'flex',alignItems:'center',gap:6}}><span style={{width:16,height:0,borderTop:'2px dashed #94a3b8',display:'inline-block'}}></span>current rules</span></div>
+      </div>
+      <div style={{height:320}}><RC.ResponsiveContainer width="100%" height="100%">
+        <RC.AreaChart data={data} margin={{top:8,right:16,left:-14,bottom:0}}>
+          <defs><linearGradient id="bkGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={T.accent} stopOpacity={0.45}/><stop offset="100%" stopColor={T.accent} stopOpacity={0.02}/></linearGradient></defs>
+          <RC.ReferenceArea y1={0} y2={0.3} fill={RISK.low} fillOpacity={0.05}/>
+          <RC.ReferenceArea y1={0.3} y2={0.6} fill={RISK.medium} fillOpacity={0.05}/>
+          <RC.ReferenceArea y1={0.6} y2={1} fill={RISK.high} fillOpacity={0.05}/>
+          <RC.CartesianGrid strokeDasharray="3 3" stroke={T.grid} vertical={false}/>
+          <RC.XAxis dataKey="date" tick={axTick} axisLine={axisLine} tickLine={false}/>
+          <RC.YAxis domain={[0,1]} tickFormatter={(v)=>Math.round(v*100)+'%'} tick={axTick} axisLine={axisLine} tickLine={false}/>
+          <RC.Tooltip {...tip} formatter={(v)=>[(v*100).toFixed(1)+'%','conversion prob']}/>
+          <RC.ReferenceLine y={rules} stroke="#94a3b8" strokeDasharray="5 4" strokeWidth={1.5} label={{value:'rules '+(rules*100).toFixed(0)+'%',fill:'#94a3b8',fontSize:11,position:'insideTopRight'}}/>
+          <RC.Area type="monotone" dataKey="p" stroke={T.accent} strokeWidth={2.5} fill="url(#bkGrad)" dot={{r:3,fill:T.accent,strokeWidth:0}} activeDot={{r:5}} animationDuration={700}/>
+        </RC.AreaChart></RC.ResponsiveContainer></div>
+    </div>);
+  }
+
+  function MKCharts(){
+    const d=mkData;
+    const verts=['healthcare','finance-insurance','technology','retail','manufacturing','real-estate'];
+    const bands=['micro','small','mid','large','enterprise'];
+    const grid={}; let maxWR=0;
+    (d.cohort_win_rates||[]).forEach(c=>{ if(c.Vertical&&c.SizeBand){grid[c.Vertical+'|'+c.SizeBand]=c; if(c.WinRate>maxWR)maxWR=c.WinRate;} });
+    const maxDeals=Math.max(1,...(d.cohort_win_rates||[]).map(c=>c.DealCount||0));
+    const cohortBars=[...(d.cohort_win_rates||[])].sort((a,b)=>(b.WinRate||0)-(a.WinRate||0)).slice(0,10);
+    return (<>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+        <div style={chartCard}>
+          <div style={{fontSize:13.5,fontWeight:600,marginBottom:6}}>Avg win probability by market</div>
+          <div style={{height:260}}><RC.ResponsiveContainer width="100%" height="100%">
+            <RC.BarChart data={d.by_market||[]} margin={{top:18,right:8,left:-14,bottom:0}}>
+              <RC.CartesianGrid strokeDasharray="3 3" stroke={T.grid} vertical={false}/>
+              <RC.XAxis dataKey="Market" tick={axTick} axisLine={axisLine} tickLine={false}/>
+              <RC.YAxis tickFormatter={(v)=>Math.round(v*100)+'%'} tick={axTick} axisLine={axisLine} tickLine={false}/>
+              <RC.Tooltip {...tip} formatter={(v)=>[(v*100).toFixed(1)+'%','avg win prob']}/>
+              <RC.Bar dataKey="avg_win_prob" radius={[4,4,0,0]} animationDuration={700}>
+                {(d.by_market||[]).map((m,i)=><RC.Cell key={i} fill={[T.accent,'#8b5cf6','#22c55e'][i%3]}/>)}
+                <RC.LabelList dataKey="n" position="top" formatter={(v)=>'n='+v} fill={T.tick} fontSize={11} fontFamily="'JetBrains Mono',monospace"/>
+              </RC.Bar>
+            </RC.BarChart></RC.ResponsiveContainer></div>
+        </div>
+        <div style={chartCard}>
+          <div style={{fontSize:13.5,fontWeight:600,marginBottom:6}}>Decile distribution</div>
+          <div style={{height:260}}><RC.ResponsiveContainer width="100%" height="100%">
+            <RC.BarChart data={d.decile_distribution||[]} margin={{top:8,right:8,left:-14,bottom:0}}>
+              <RC.CartesianGrid strokeDasharray="3 3" stroke={T.grid} vertical={false}/>
+              <RC.XAxis dataKey="Decile" tick={axTick} axisLine={axisLine} tickLine={false}/>
+              <RC.YAxis tick={axTick} axisLine={axisLine} tickLine={false}/>
+              <RC.Tooltip {...tip} formatter={(v)=>[v,'companies']}/>
+              <RC.Bar dataKey="n" radius={[3,3,0,0]} animationDuration={700}>
+                {(d.decile_distribution||[]).map((x,i)=>{const f=i/9; const l=Math.round(70-22*f); return <RC.Cell key={i} fill={`hsl(217,80%,${l}%)`}/>;})}
+              </RC.Bar>
+            </RC.BarChart></RC.ResponsiveContainer></div>
+        </div>
+      </div>
+      <div style={{...card,marginBottom:16}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}><div style={{fontSize:13.5,fontWeight:600}}>Win-rate heatmap · vertical × size band</div><div style={{display:'flex',alignItems:'center',gap:8,fontSize:11,color:'var(--muted)'}}><span>0%</span><span style={{width:90,height:10,borderRadius:3,background:'linear-gradient(90deg,color-mix(in srgb,#16a34a 8%,transparent),#16a34a)',display:'inline-block'}}></span><span>{(maxWR*100).toFixed(0)+'%'}</span></div></div>
+        <div style={{display:'grid',gridTemplateColumns:'140px repeat(5,1fr)',gap:6,minWidth:560}}>
+          <div></div>
+          {bands.map(b=><div key={b} style={{fontSize:11,fontWeight:600,textAlign:'center',color:'var(--muted)',textTransform:'capitalize'}}>{b}</div>)}
+          {verts.map(v=> (
+            <React.Fragment key={v}>
+              <div style={{fontSize:11.5,fontWeight:500,display:'flex',alignItems:'center',textTransform:'capitalize',color:'var(--muted)'}}>{v.replace('-',' ')}</div>
+              {bands.map(b=>{ const c=grid[v+'|'+b]; const wr=c?c.WinRate:0; const a=maxWR?wr/maxWR:0;
+                return <div key={b} title={`${v} · ${b}: ${(wr*100).toFixed(1)}% win · ${c?c.DealCount:0} deals`} style={{height:46,borderRadius:7,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:600,fontFamily:"'JetBrains Mono',monospace",background:`color-mix(in srgb,#16a34a ${Math.round(a*88+6)}%,var(--panel2))`,color:a>0.55?'#fff':'var(--text)'}}>{c?(wr*100).toFixed(0)+'%':'—'}</div>;})}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+      <div style={{borderRadius:14,border:'1px solid var(--border)',background:'var(--panel)',overflow:'hidden'}}>
+        <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border)',fontSize:13.5,fontWeight:600}}>Cohort win rates · sized by deal count</div>
+        <div style={{padding:'8px 20px 16px'}}>
+          {cohortBars.map((c,i)=>{ const wPct=Math.round((c.DealCount/maxDeals)*100*anim); const f=maxWR?c.WinRate/maxWR:0;
+            return (<div key={i} style={{display:'flex',alignItems:'center',gap:14,padding:'8px 0',borderBottom:'1px solid var(--border)'}}>
+              <div style={{width:230,flex:'none',fontSize:12,display:'flex',justifyContent:'space-between',gap:8}}><span style={{textTransform:'capitalize'}}>{String(c.Vertical).replace('-',' ')} · {c.SizeBand}</span><span style={{fontFamily:"'JetBrains Mono',monospace",color:'var(--muted)'}}>n={c.DealCount}</span></div>
+              <div style={{flex:1,height:22,background:'var(--panel2)',borderRadius:6,overflow:'hidden'}}><div style={{height:'100%',width:wPct+'%',borderRadius:6,background:`linear-gradient(90deg,color-mix(in srgb,#16a34a ${Math.round(40+f*40)}%,transparent),#16a34a)`,transition:'width .4s'}}></div></div>
+              <div style={{width:48,flex:'none',textAlign:'right',fontFamily:"'JetBrains Mono',monospace",fontSize:12,fontWeight:600}}>{(c.WinRate*100).toFixed(1)+'%'}</div>
+            </div>);
+          })}
+        </div>
+      </div>
+    </>);
+  }
+
+  // ---------------- Model validation tab ----------------
+  const fmtN=(x)=> (x===null||x===undefined||(typeof x==='number'&&isNaN(x)))?'—':(typeof x==='number'?x.toFixed(3):String(x));
+  const fmtP=(x)=> (x===null||x===undefined)?'—':(typeof x==='number'?(Math.abs(x)<=1?(x*100).toFixed(1)+'%':x.toFixed(3)):String(x));
+  const statRow=(label,val,sub)=>(<div style={{display:'flex',justifyContent:'space-between',gap:10,padding:'7px 0',borderBottom:'1px solid var(--border)',fontSize:12.5}}><span style={{color:'var(--muted)'}}>{label}</span><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,textAlign:'right'}}>{val}{sub?<span style={{color:'var(--muted)',fontWeight:400}}> {sub}</span>:''}</span></div>);
+
+  function MV(){
+    if(!modelCards) return null;
+    const sCol=(s)=> s==='real-production'?'#16a34a':s==='interim-standin'?'#f59e0b':s==='interim-corrected'?'#0ea5e9':s==='shadow'?'#a78bfa':'#94a3b8';
+    return (<div>
+      {modelCards.map((c,ci)=>{
+        if(c.error) return <div key={ci} style={{...card,marginBottom:16,color:'#f87171'}}>error: {c.error}</div>;
+        const sc=sCol(c.status), D=c.discrimination||{}, CAL=c.calibration||{}, BR=c.brier||{}, TR=c.training||{};
+        return (<div key={ci} style={{...card,marginBottom:18}}>
+          <div style={{display:'flex',alignItems:'center',gap:12,flexWrap:'wrap',marginBottom:14}}>
+            <div style={{fontSize:16,fontWeight:700}}>{c.contract}</div>
+            {c.version && <span style={{fontSize:11,fontFamily:"'JetBrains Mono',monospace",color:'var(--muted)'}}>{c.version}</span>}
+            <span style={{fontSize:11,fontWeight:600,padding:'3px 10px',borderRadius:999,color:sc,background:`color-mix(in srgb,${sc} 15%,transparent)`,border:`1px solid color-mix(in srgb,${sc} 38%,transparent)`}}>{c.label}</span>
+            {c.algorithm && <span style={{fontSize:11,color:'var(--muted)'}}>{c.algorithm}{c.horizon_days?` · ${c.horizon_days}d horizon`:''}{c.feature_count?` · ${c.feature_count} features`:''}</span>}
+          </div>
+
+          {c.status==='real-production' && (<div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:16}}>
+              <KPI label="Walk-forward ROC-AUC" display={fmtN(D.walkforward_auc_mean)} color="#22c55e" sub={`±${fmtN(D.walkforward_auc_std)} · ${D.walkforward_folds} folds`}/>
+              <KPI label="Group-split test AUC" display={fmtN(D.group_split_test_auc)} sub={`train ${fmtN(D.group_split_train_auc)}`}/>
+              <KPI label="Group K-Fold AUC" display={fmtN(D.group_kfold_auc_mean)} sub={`±${fmtN(D.group_kfold_auc_std)}`}/>
+              <KPI label="PR-AUC" display={fmtN(D.pr_auc)} sub={`no-skill ${fmtN(D.pr_auc_no_skill)} · paper`}/>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:16}}>
+              <div style={card}>
+                <div style={{fontSize:13.5,fontWeight:600,marginBottom:10}}>How it was trained</div>
+                <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5,marginBottom:6}}>{TR.design}</div>
+                <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5,marginBottom:10}}>{TR.validation}</div>
+                {statRow('Training samples', TR.n_samples!=null?TR.n_samples.toLocaleString():'—')}
+                {statRow('Unique tenants', TR.n_tenants!=null?TR.n_tenants.toLocaleString():'—')}
+                {statRow('Cohort base rate', fmtP(TR.churn_rate))}
+                {statRow('Window', `${TR.decision_date_min||'?'} → ${TR.decision_date_max||'?'}`)}
+                {statRow('Overfit gap', fmtN(D.overfit_gap))}
+                {statRow('Log loss', `${fmtN(D.log_loss)}`, 'paper')}
+              </div>
+              <div style={card}>
+                <div style={{fontSize:13.5,fontWeight:600,marginBottom:10}}>Calibration</div>
+                <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5,marginBottom:10}}>{CAL.method} — anchored to the validated {fmtP(CAL.base_rate_target)} non-renewal base rate.</div>
+                {statRow('Mean prediction', `${fmtP(CAL.mean_pred_pre)} → ${fmtP(CAL.mean_pred_post)}`, 'pre→post')}
+                {statRow('Platt (a, b)', `${fmtN(CAL.platt_a)}, ${fmtN(CAL.platt_b)}`)}
+                {statRow('Probability clip', `[${CAL.prob_floor}, ${CAL.prob_ceil}]`)}
+                {statRow('Calibration set', CAL.calibration_set_size!=null?CAL.calibration_set_size.toLocaleString():'—')}
+                {statRow('Decision threshold', `${fmtN(CAL.optimal_threshold)}`, `F1 ${fmtN(CAL.optimal_f1)}`)}
+                {statRow('Precision / Recall', `${fmtP(CAL.optimal_precision)} / ${fmtP(CAL.optimal_recall)}`, '@thr')}
+              </div>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1.4fr',gap:16}}>
+              <div style={card}>
+                <div style={{fontSize:13.5,fontWeight:600,marginBottom:10}}>Brier score (lower is better)</div>
+                {statRow('Raw (uncalibrated)', fmtN(BR.raw))}
+                {statRow('Sigmoid (Platt)', fmtN(BR.sigmoid))}
+                {statRow('Isotonic (chosen)', fmtN(BR.isotonic))}
+                <div style={{fontSize:11.5,color:'#22c55e',marginTop:8}}>isotonic improves Brier by {fmtN((BR.raw||0)-(BR.isotonic||0))} vs raw</div>
+              </div>
+              <div style={chartCard}>
+                <div style={{fontSize:13.5,fontWeight:600,marginBottom:6}}>Feature importance · top {(c.feature_importance||[]).length}</div>
+                <div style={{height:360}}><RC.ResponsiveContainer width="100%" height="100%">
+                  <RC.BarChart data={c.feature_importance||[]} layout="vertical" margin={{top:4,right:34,left:10,bottom:4}}>
+                    <RC.CartesianGrid strokeDasharray="3 3" stroke={T.grid} horizontal={false}/>
+                    <RC.XAxis type="number" tick={axTick} axisLine={axisLine} tickLine={false}/>
+                    <RC.YAxis type="category" dataKey="Feature" width={150} tick={{fill:T.tick,fontSize:10}} axisLine={false} tickLine={false}/>
+                    <RC.Tooltip {...tip} formatter={(v)=>[Number(v).toFixed(3),'importance']}/>
+                    <RC.Bar dataKey="Importance" fill={T.accent} radius={[0,3,3,0]} animationDuration={700}/>
+                  </RC.BarChart></RC.ResponsiveContainer></div>
+              </div>
+            </div>
+            {c.notes && <div style={{fontSize:11.5,color:'var(--muted)',marginTop:10}}>{c.notes}</div>}
+          </div>)}
+
+          {c.status==='interim-standin' && (<div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:14,marginBottom:12}}>
+              <KPI label="Held-out AUC (interim)" display={fmtN(D.holdout_auc)} color="#f59e0b" sub="leakage-prone"/>
+              <KPI label="Training rows" display={TR.n_train!=null?TR.n_train.toLocaleString():'—'} sub="real labels"/>
+              <KPI label="Features" display={c.feature_count} sub={c.algorithm}/>
+            </div>
+            <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5}}>{TR.design}</div>
+            <div style={{fontSize:12.5,color:'#f59e0b',marginTop:8}}>{D.caveat}</div>
+            <div style={{fontSize:12,color:'var(--muted)',marginTop:8}}>{c.notes}</div>
+          </div>)}
+
+          {c.status==='interim-corrected' && (<div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:12}}>
+              <KPI label="PR-AUC (rolling-origin)" display={fmtN(D.pr_auc)} color="#0ea5e9" sub={`no-skill ${fmtN(D.pr_auc_no_skill)}${(D.pr_auc_lift_ci95||[]).length?` · lift CI ${fmtN(D.pr_auc_lift_ci95[0])}–${fmtN(D.pr_auc_lift_ci95[1])}`:''}`}/>
+              <KPI label="ROC-AUC" display={fmtN(D.roc_auc)} sub="imbalance-inflated"/>
+              <KPI label="Brier" display={fmtN(BR.oof)} sub={`log loss ${fmtN(c.log_loss)}`}/>
+              <KPI label="Converting prospects" display={TR.n_converting_prospects} color="#f59e0b" sub={`of ${TR.n_prospects} · Riley-bound`}/>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:12}}>
+              <div style={card}>
+                <div style={{fontSize:13.5,fontWeight:600,marginBottom:10}}>How it was trained</div>
+                <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5,marginBottom:10}}>{TR.design}</div>
+                {statRow('Estimator', (c.model_selection||{}).chosen, `penalized ${fmtN((c.model_selection||{}).penalized_pr_auc)} / firth ${fmtN((c.model_selection||{}).firth_pr_auc)}`)}
+                {statRow('Rows / positives', `${(TR.n_rows||0).toLocaleString()} / ${TR.n_pos_rows}`)}
+                {statRow('Base rate', fmtP(TR.base_rate))}
+                {statRow('Calibration', `slope ${fmtN(CAL.slope)} · int ${fmtN(CAL.intercept)}`, CAL.method)}
+                {statRow('Probability clip', `[${CAL.prob_floor}, ${CAL.prob_ceil}]`)}
+              </div>
+              <div style={card}>
+                <div style={{fontSize:13.5,fontWeight:600,marginBottom:10}}>Validation status</div>
+                <div style={{fontSize:12.5,color:'#0ea5e9',lineHeight:1.5,marginBottom:8}}>{D.caveat}</div>
+                <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5,marginBottom:8}}>{(c.walk_forward||{}).status}</div>
+                <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.5}}><b>Next:</b> {(c.walk_forward||{}).next}</div>
+              </div>
+            </div>
+            {c.notes && <div style={{fontSize:12,color:'var(--muted)',marginTop:8}}>{c.notes}</div>}
+          </div>)}
+
+          {c.status==='shadow' && (<div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:12}}>
+              <KPI label="Model AUC (base)" display={fmtN(D.base_auc)} color="#a78bfa" sub={`vs cohort ${fmtN(D.baseline_auc)}`}/>
+              <KPI label="AUC lift" display={`+${fmtN(D.base_auc_lift)}`} sub="over cohort baseline"/>
+              <KPI label="+ scoops AUC" display={fmtN(D.scoops_auc)} color="#f59e0b" sub={`lift +${fmtN(D.scoops_auc_lift)} · no help`}/>
+              <KPI label="Resolved deals" display={TR.resolved_deals} sub={`win ${fmtP(TR.win_rate)} · ${TR.with_zicompany} w/ ZI`}/>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:12}}>
+              <div style={card}>
+                <div style={{fontSize:13.5,fontWeight:600,marginBottom:10}}>How it was trained</div>
+                <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5,marginBottom:8}}>{TR.design}</div>
+                <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5}}>{c.validation}</div>
+              </div>
+              <div style={card}>
+                <div style={{fontSize:13.5,fontWeight:600,marginBottom:10}}>Shadow status</div>
+                <div style={{fontSize:12.5,color:'#a78bfa',lineHeight:1.5,marginBottom:8}}>{D.caveat}</div>
+                <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5,marginBottom:8}}>{(c.walk_forward||{}).status}</div>
+                <div style={{fontSize:12,color:'var(--muted)',lineHeight:1.5}}><b>Graduation:</b> {(c.walk_forward||{}).next}</div>
+              </div>
+            </div>
+            {c.notes && <div style={{fontSize:12,color:'var(--muted)',marginTop:8}}>{c.notes}</div>}
+          </div>)}
+
+          {c.status==='aggregate' && (<div style={{fontSize:13,color:'var(--muted)',lineHeight:1.5}}>{c.notes}</div>)}
+        </div>);
+      })}
+    </div>);
+  }
+
+  // ---------------- Marketing cohort targeting ----------------
+  function MKTargeting(){
+    if(!mkTargeting||!mkTargeting.cohorts||!mkTargeting.cohorts.length) return null;
+    const top=mkTargeting.cohorts.slice(0,12).map(c=>({name:`${c.vertical} · ${c.size_band}`, ew:c.expected_winnable}));
+    return (<div style={{...card,marginBottom:18}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8,flexWrap:'wrap',gap:8}}>
+        <div style={{fontSize:14,fontWeight:700}}>Who to reach out to · cohort targeting</div>
+        <div style={{fontSize:11,color:'var(--muted)'}}>ranked by expected winnable = addressable × historical win-rate · mkt.CohortCatalog</div>
+      </div>
+      <div style={{height:300}}><RC.ResponsiveContainer width="100%" height="100%">
+        <RC.BarChart data={top} layout="vertical" margin={{top:4,right:46,left:10,bottom:4}}>
+          <RC.CartesianGrid strokeDasharray="3 3" stroke={T.grid} horizontal={false}/>
+          <RC.XAxis type="number" tick={axTick} axisLine={axisLine} tickLine={false}/>
+          <RC.YAxis type="category" dataKey="name" width={180} tick={{fill:T.tick,fontSize:10}} axisLine={false} tickLine={false}/>
+          <RC.Tooltip {...tip} formatter={(v)=>[v,'expected winnable deals']}/>
+          <RC.Bar dataKey="ew" fill="#22c55e" radius={[0,4,4,0]} animationDuration={700}>
+            <RC.LabelList dataKey="ew" position="right" fill={T.tick} fontSize={11} fontFamily="'JetBrains Mono',monospace"/>
+          </RC.Bar>
+        </RC.BarChart></RC.ResponsiveContainer></div>
+      <div style={{overflowX:'auto',maxHeight:240,overflowY:'auto',marginTop:8}}>
+        <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+          <thead style={{position:'sticky',top:0,background:'var(--panel)'}}><tr>
+            {['Vertical','Size band','Addressable','Win-rate','Expected winnable'].map(h=><th key={h} style={{textAlign:'left',padding:'8px 12px',fontSize:11,fontWeight:600,color:'var(--muted)',whiteSpace:'nowrap'}}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {mkTargeting.cohorts.slice(0,15).map((c,i)=>(<tr key={i} style={{borderTop:'1px solid var(--border)'}}>
+              <td style={{padding:'8px 12px',textTransform:'capitalize'}}>{c.vertical}</td>
+              <td style={{padding:'8px 12px',textTransform:'capitalize'}}>{c.size_band}</td>
+              <td style={{padding:'8px 12px',fontFamily:"'JetBrains Mono',monospace"}}>{c.addressable}</td>
+              <td style={{padding:'8px 12px',fontFamily:"'JetBrains Mono',monospace"}}>{(c.win_rate*100).toFixed(1)}%</td>
+              <td style={{padding:'8px 12px',fontFamily:"'JetBrains Mono',monospace",fontWeight:600,color:'#22c55e'}}>{c.expected_winnable}</td>
+            </tr>))}
+          </tbody>
+        </table>
+      </div>
+    </div>);
+  }
+
+  // ---------------- KPIs ----------------
+  let kpis=[];
+  if(view==='mf'&&mfData&&mfData.results){ const res=mfData.results; const mean=res.reduce((a,r)=>a+r.churn_probability,0)/(res.length||1); const high=res.filter(r=>r.risk_tier==='high').length; const notice=res.filter(r=>r.has_notice).length;
+    kpis=[{label:'Units scored',display:Math.round(res.length*anim).toLocaleString(),sub:`${selBuildings.length} buildings`},
+      {label:'Mean move-out prob',display:(mean*anim*100).toFixed(1)+'%',sub:'across scored units'},
+      {label:'High-risk count',display:Math.round(high*anim).toLocaleString(),color:RISK.high,sub:`${res.length?Math.round(high/res.length*100):0}% of portfolio`},
+      {label:'Tenants w/ notice filed',display:Math.round(notice*anim).toLocaleString(),color:RISK.medium,sub:'formal move-out notice'}]; }
+  if(view==='bk'&&bkData){ const d=bkData; const sc=d.scorecard; const rs=d.current_rules_score||{};
+    if(sc){ const wp=sc.win_prob||0;
+      kpis=[{label:'Win probability',display:(wp*anim*100).toFixed(1)+'%',color:tierColor(wp>=0.3?'high':wp>=0.15?'medium':'low'),sub:'live P(win) = cohort × lift'},
+        {label:'Cohort win-rate',display:((sc.cohort_win_rate||0)*anim*100).toFixed(1)+'%',sub:sc.cohort||'size/vertical baseline'},
+        {label:'Expected value',display:sc.expected_value?'$'+Math.round(sc.expected_value*anim).toLocaleString():'—',sub:'win_prob × cohort value'},
+        {label:'Scoop momentum',display:sc.scoop_count_90d!=null?Math.round(sc.scoop_count_90d*anim).toLocaleString():'—',color:'var(--accent)',sub:'scoops last 90d'}];
+    } else if(d.history){ const last=d.history.length?d.history[d.history.length-1].conversion_probability:0;
+      kpis=[{label:'Conversion prob (interim)',display:(last*anim*100).toFixed(1)+'%',color:tierColor(last>=0.3?'high':last>=0.15?'medium':'low'),sub:'v0.3 · no ZI company link'},
+        {label:'History points',display:Math.round(d.history.length*anim).toLocaleString(),sub:'monthly snapshots'},
+        {label:'Rules probability',display:((rs.Probability||0)*anim*100).toFixed(1)+'%',sub:`scored ${rs.ScoredAt||'—'}`},
+        {label:'Rules decile',display:Math.round((rs.Decile||0)*anim).toString(),color:'var(--accent)',sub:'1 = top decile'}]; } }
+  if(view==='mk'&&mkData&&mkData.by_market){ const d=mkData; const totalN=d.by_market.reduce((a,m)=>a+m.n,0); const avgProb=d.by_market.reduce((a,m)=>a+(m.avg_win_prob||0)*m.n,0)/(totalN||1); const markets=d.by_market.filter(m=>m.n>0).length;
+    kpis=[{label:'Companies in segment',display:Math.round(totalN*anim).toLocaleString(),sub:mkKey},
+      {label:'Average probability',display:(avgProb*anim*100).toFixed(1)+'%',color:'var(--accent)',sub:'weighted win prob'},
+      {label:'Markets covered',display:Math.round(markets*anim).toString(),sub:'DSM · OMA · OTHER'}]; }
+
+  // mf table
+  const dir=sortDir==='asc'?1:-1;
+  const mfSorted = mfData&&mfData.results? [...mfData.results].sort((a,b)=>{const x=a[sortKey],y=b[sortKey]; return (x<y?-1:x>y?1:0)*dir;}) : [];
+  const mfColsDef=[['scode','Tenant','left'],['property','Property','left'],['unit','Unit','left'],['churn_probability','Move-out prob','right'],['risk_tier','Tier','left'],['has_notice','Notice','left'],['actual_churn','Actual','center']];
+
+  const navItems=[{key:'mf',icon:'M',ib:'color-mix(in srgb,#5b8def 18%,transparent)',ic:'#7aa5f5',title:'Multifamily',sub:'Tenant Move-Out Risk'},
+    {key:'bk',icon:'B',ib:'color-mix(in srgb,#8b5cf6 18%,transparent)',ic:'#a78bfa',title:'Brokerage',sub:'Prospect Conversion'},
+    {key:'mk',icon:'A',ib:'color-mix(in srgb,#22c55e 18%,transparent)',ic:'#4ade80',title:'Marketing',sub:'Cohort & Industry Analytics'},
+    {key:'mv',icon:'V',ib:'color-mix(in srgb,#94a3b8 20%,transparent)',ic:'#cbd5e1',title:'Model',sub:'Validation & metrics'}];
+
+  const errBanner = (msg)=> <div style={{padding:'12px 16px',borderRadius:10,background:'color-mix(in srgb,#dc2626 12%,transparent)',border:'1px solid color-mix(in srgb,#dc2626 35%,transparent)',color:'#f87171',fontSize:13,marginBottom:16}}>API error: {msg}</div>;
+
+  return (
+    <div style={{...V,minHeight:'100vh',transition:'background .25s',colorScheme:dark?'dark':'light'}}>
+      <div style={{display:'flex',minHeight:'100vh',width:'100%',color:'var(--text)',background:'var(--bg)'}}>
+        {/* SIDEBAR */}
+        <aside style={{width:268,flex:'none',display:'flex',flexDirection:'column',gap:4,padding:'24px 16px',borderRight:'1px solid var(--border)',background:'var(--panel)',position:'sticky',top:0,height:'100vh'}}>
+          <div style={{padding:'4px 8px 18px 8px'}}>
+            <div style={{display:'flex',alignItems:'center',gap:10}}>
+              <div style={{width:30,height:30,borderRadius:8,background:'linear-gradient(135deg,#5b8def,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:14,color:'#fff',boxShadow:'0 2px 10px rgba(91,141,239,.35)'}}>R</div>
+              <div style={{fontSize:15,fontWeight:700,letterSpacing:'-.01em',lineHeight:1.1}}>RTS Prediction Hub</div>
+            </div>
+            <div style={{fontSize:11.5,color:'var(--muted)',margin:'10px 0 0 2px',lineHeight:1.4}}>Shared LightGBM endpoint · DGX&nbsp;Spark</div>
+            <div style={{display:'inline-flex',alignItems:'center',gap:7,marginTop:12,padding:'5px 10px',borderRadius:999,background:'color-mix(in srgb,#16a34a 14%,transparent)',border:'1px solid color-mix(in srgb,#16a34a 35%,transparent)'}}>
+              <span style={{width:7,height:7,borderRadius:999,background:'#16a34a',boxShadow:'0 0 7px #16a34a',animation:'rtsPulse 2s infinite'}}></span>
+              <span style={{fontSize:11,fontWeight:600,color:'#22c55e'}}>API connected</span>
+            </div>
+          </div>
+          <div style={{fontSize:10.5,fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',color:'var(--muted)',padding:'6px 8px'}}>Prediction apps</div>
+          {navItems.map(n=>{ const active=view===n.key; return (
+            <button key={n.key} onClick={()=>switchView(n.key)} style={{width:'100%',display:'flex',alignItems:'center',gap:10,padding:'9px 10px',borderRadius:10,cursor:'pointer',fontFamily:'inherit',textAlign:'left',border:`1px solid ${active?'var(--border)':'transparent'}`,background:active?'var(--panel2)':'transparent',color:'var(--text)',transition:'background .15s'}}>
+              <span style={{width:28,height:28,borderRadius:7,display:'flex',alignItems:'center',justifyContent:'center',flex:'none',fontSize:13,fontWeight:700,background:n.ib,color:n.ic}}>{n.icon}</span>
+              <span style={{display:'flex',flexDirection:'column',alignItems:'flex-start',gap:1,minWidth:0}}>
+                <span style={{fontSize:12.5,fontWeight:600,lineHeight:1.2}}>{n.title}</span>
+                <span style={{fontSize:10.5,color:'var(--muted)',lineHeight:1.2,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:175}}>{n.sub}</span>
+              </span>
+            </button>); })}
+          <div style={{marginTop:'auto',paddingTop:16}}>
+            <button onClick={()=>setDark(!dark)} style={{width:'100%',display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,padding:'9px 12px',borderRadius:10,border:'1px solid var(--border)',background:'var(--panel2)',color:'var(--text)',cursor:'pointer',fontFamily:'inherit',fontSize:12,fontWeight:500}}>
+              <span>{dark?'Dark theme':'Light theme'}</span><span style={{fontSize:14}}>{dark?'◒':'☀'}</span>
+            </button>
+            <div style={{fontSize:10,color:'var(--muted)',textAlign:'center',marginTop:12,fontFamily:"'JetBrains Mono',monospace"}}>model: {modelVersion} ({modelSource})</div>
+          </div>
+        </aside>
+
+        {/* MAIN */}
+        <main style={{flex:1,minWidth:0,padding:'32px 36px 64px',maxWidth:1500}}>
+          <header style={{marginBottom:24}}>
+            <div style={{fontSize:11,fontWeight:600,letterSpacing:'.09em',textTransform:'uppercase',color:'var(--accent)',marginBottom:8}}>{headers.k}</div>
+            <h1 style={{fontSize:26,fontWeight:700,letterSpacing:'-.02em',margin:'0 0 8px'}}>{headers.t}</h1>
+            <p style={{fontSize:14,color:'var(--muted)',margin:0,maxWidth:680,lineHeight:1.5}}>{headers.d}</p>
+            {activeData && (<div style={{display:'inline-flex',alignItems:'center',gap:7,marginTop:12,padding:'4px 11px',borderRadius:999,fontSize:11,fontWeight:600,background:isInterim?'color-mix(in srgb,#f59e0b 14%,transparent)':'color-mix(in srgb,#16a34a 14%,transparent)',border:`1px solid ${isInterim?'color-mix(in srgb,#f59e0b 38%,transparent)':'color-mix(in srgb,#16a34a 38%,transparent)'}`,color:isInterim?'#f59e0b':'#22c55e'}}>{isInterim?'INTERIM STAND-IN':'REAL · VALIDATED'} · {modelVersion}</div>)}
+          </header>
+
+          {/* ===== MF ===== */}
+          {view==='mf' && (<div>
+            <div style={{display:'flex',flexWrap:'wrap',alignItems:'flex-end',gap:18,padding:'18px 20px',borderRadius:14,border:'1px solid var(--border)',background:'var(--panel)',marginBottom:22}}>
+              <div style={{flex:1,minWidth:280}}>
+                <div style={lbl}>Buildings</div>
+                <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+                  {BUILDINGS.map(name=>{ const active=selBuildings.includes(name); return (
+                    <button key={name} onClick={()=>{const set=new Set(selBuildings); set.has(name)?set.delete(name):set.add(name); setSelBuildings([...set]);}}
+                      style={{padding:'7px 13px',borderRadius:999,cursor:'pointer',fontFamily:'inherit',fontSize:12,fontWeight:500,transition:'all .15s',border:`1px solid ${active?'transparent':'var(--border)'}`,background:active?'color-mix(in srgb,#5b8def 20%,transparent)':'var(--panel2)',color:active?'#9bbbf7':'var(--muted)'}}>{name}</button>);})}
+                </div>
+              </div>
+              <div><div style={lbl}>As-of date</div><input type="date" value={asOf} onChange={e=>setAsOf(e.target.value)} style={{padding:'9px 12px',borderRadius:9,border:'1px solid var(--border)',background:'var(--panel2)',color:'var(--text)',fontFamily:"'JetBrains Mono',monospace",fontSize:12.5,colorScheme:'var(--scheme)'}}/></div>
+              <div style={{minWidth:170}}><div style={lbl}>Scope</div><div style={{padding:'9px 12px',borderRadius:9,border:'1px solid var(--border)',background:'var(--panel2)',fontSize:12.5,color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace"}}>all occupied units{mfData&&mfData.eligible_units?` · ${mfData.eligible_units}`:''}</div></div>
+              <button onClick={runMF} style={runBtn}>{loading?'Running…':'Run prediction'}</button>
+              <button onClick={runBacktest} style={{padding:'10px 18px',borderRadius:9,border:'1px solid var(--accent)',background:'transparent',color:'var(--accent)',cursor:'pointer',fontFamily:'inherit',fontSize:13,fontWeight:600}}>{btLoading?'Backtesting…':'Backtest this date'}</button>
+            </div>
+            {(btLoading||mfBacktest) && (<div style={{...card,marginBottom:22,border:'1px solid var(--accent)'}}>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>Backtest · predicted vs actual <span style={{fontSize:11,fontWeight:400,color:'var(--muted)'}}>— out-of-time validation on the {asOf} cohort (sample of 250)</span></div>
+              {btLoading && (<div style={{color:'var(--muted)',fontSize:12,padding:'8px 0'}}>Scoring ~250 units as of {asOf} and comparing to realized move-outs… (~1 min)</div>)}
+              {mfBacktest&&mfBacktest.error && errBanner(mfBacktest.error)}
+              {mfBacktest&&mfBacktest.label_censored && (<div style={{padding:'10px 14px',borderRadius:9,background:'color-mix(in srgb,#f59e0b 12%,transparent)',border:'1px solid color-mix(in srgb,#f59e0b 35%,transparent)',color:'#f59e0b',fontSize:12,margin:'8px 0'}}>This date is within the 180-day horizon — move-outs not fully realized (labels censored). Pick a date ≥180 days ago.</div>)}
+              {mfBacktest&&mfBacktest.roc_auc!=null && (<div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,margin:'12px 0'}}>
+                  <KPI label="ROC-AUC (out-of-time)" display={fmtN(mfBacktest.roc_auc)} color="#22c55e" sub="vs 0.893 walk-forward"/>
+                  <KPI label="Brier" display={fmtN(mfBacktest.brier)} sub={`log loss ${fmtN(mfBacktest.log_loss)}`}/>
+                  <KPI label="Actual churn rate" display={pct(mfBacktest.base_rate,1)} sub={`mean predicted ${pct(mfBacktest.mean_predicted,1)}`}/>
+                  <KPI label="Labeled units" display={mfBacktest.labeled_units} sub={`of ${mfBacktest.scored_units} scored`}/>
+                </div>
+                <div style={{fontSize:12.5,fontWeight:600,margin:'10px 0 6px'}}>Calibration — predicted vs actual per band</div>
+                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
+                  <thead><tr>{['Probability band','Units','Mean predicted','Actual churn rate'].map(h=><th key={h} style={{textAlign:'left',padding:'6px 12px',fontSize:10.5,fontWeight:600,color:'var(--muted)'}}>{h}</th>)}</tr></thead>
+                  <tbody>{(mfBacktest.calibration||[]).map((c,i)=>(<tr key={i} style={{borderTop:'1px solid var(--border)'}}>
+                    <td style={{padding:'6px 12px'}}>{c.bin}</td><td style={{padding:'6px 12px',fontFamily:"'JetBrains Mono',monospace"}}>{c.n}</td>
+                    <td style={{padding:'6px 12px',fontFamily:"'JetBrains Mono',monospace"}}>{(c.pred_mean*100).toFixed(1)}%</td>
+                    <td style={{padding:'6px 12px',fontFamily:"'JetBrains Mono',monospace",fontWeight:600,color:'#22c55e'}}>{(c.actual_rate*100).toFixed(1)}%</td>
+                  </tr>))}</tbody>
+                </table>
+                {mfBacktest.caveat && <div style={{fontSize:11,color:'var(--muted)',marginTop:10,lineHeight:1.5}}>Caveat: {mfBacktest.caveat}</div>}
+              </div>)}
+            </div>)}
+            {loading && (<div><div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:16,marginBottom:22}}>{[0,1,2,3].map(i=><Skel key={i} h={104}/>)}</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}><Skel h={320}/><Skel h={320}/></div></div>)}
+            {ready && mfData && (<div>
+              {mfData.error && errBanner(mfData.error)}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:16,marginBottom:20}}>{kpis.map((k,i)=><KPI key={i} {...k}/>)}</div>
+              {!mfData.error && (!mfData.results||mfData.results.length===0) && (<div style={{padding:'14px 16px',borderRadius:10,background:'var(--panel2)',border:'1px solid var(--border)',color:'var(--muted)',fontSize:13,marginBottom:16}}>No occupied units for this selection / as-of date.</div>)}
+              <MFCharts/>
+              <div style={{borderRadius:14,border:'1px solid var(--border)',background:'var(--panel)',overflow:'hidden'}}>
+                <div style={{padding:'16px 20px',display:'flex',justifyContent:'space-between',alignItems:'center',borderBottom:'1px solid var(--border)'}}><div style={{fontSize:13.5,fontWeight:600}}>Tenant scores</div><div style={{fontSize:11,color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace"}}>{mfSorted.length} rows · click headers to sort</div></div>
+                <div style={{overflowX:'auto',maxHeight:520,overflowY:'auto'}}>
+                  <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+                    <thead style={{position:'sticky',top:0,background:'var(--panel)',zIndex:1}}><tr>
+                      {mfColsDef.map(([key,label,al])=>(<th key={key} onClick={()=>{ if(sortKey===key) setSortDir(sortDir==='desc'?'asc':'desc'); else {setSortKey(key);setSortDir('desc');} }} style={{textAlign:al,padding:'11px 16px',fontSize:11,fontWeight:600,color:'var(--muted)',cursor:'pointer',userSelect:'none',whiteSpace:'nowrap'}}>{label}{sortKey===key?(sortDir==='asc'?' ↑':' ↓'):''}</th>))}
+                    </tr></thead>
+                    <tbody>
+                      {mfSorted.slice(0,200).map((r,i)=>(<tr key={i} style={{borderTop:'1px solid var(--border)'}}>
+                        <td style={{padding:'11px 16px',fontFamily:"'JetBrains Mono',monospace",color:'var(--muted)'}}>{r.scode}</td>
+                        <td style={{padding:'11px 16px'}}>{r.property}</td>
+                        <td style={{padding:'11px 16px',fontFamily:"'JetBrains Mono',monospace"}}>{r.unit}</td>
+                        <td style={{padding:'11px 16px',textAlign:'right',fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>{(r.churn_probability*100).toFixed(1)+'%'}</td>
+                        <td style={{padding:'11px 16px'}}><span style={tierBadge(r.risk_tier)}>{r.risk_tier}</span></td>
+                        <td style={{padding:'11px 16px'}}>{r.has_notice?<span style={{display:'inline-block',padding:'2px 9px',borderRadius:6,fontSize:11,fontWeight:600,color:'#f59e0b',background:'color-mix(in srgb,#f59e0b 14%,transparent)'}}>Filed</span>:<span style={{color:'var(--muted)'}}>—</span>}</td>
+                        <td style={{padding:'11px 16px',textAlign:'center'}}>{r.actual_churn?'Yes':'No'}</td>
+                      </tr>))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div style={{fontSize:11,color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace",marginTop:14}}>{caption}</div>
+            </div>)}
+          </div>)}
+
+          {/* ===== BK ===== */}
+          {view==='bk' && (<div>
+            <BKScorecard/>
+            <div style={{fontSize:12.5,fontWeight:600,color:'var(--muted)',margin:'4px 2px 10px'}}>Drill into one company — conversion-probability model (v0.3)</div>
+            <div style={{display:'flex',flexWrap:'wrap',alignItems:'flex-end',gap:18,padding:'18px 20px',borderRadius:14,border:'1px solid var(--border)',background:'var(--panel)',marginBottom:22}}>
+              <div style={{flex:1,minWidth:240}}><div style={lbl}>Search company (id or name)</div><input type="text" value={bkQuery} onChange={e=>setBkQuery(e.target.value)} placeholder="e.g. 840 or Interiors" style={{width:'100%',padding:'9px 12px',borderRadius:9,border:'1px solid var(--border)',background:'var(--panel2)',color:'var(--text)',fontFamily:'inherit',fontSize:13}}/></div>
+              <div style={{minWidth:280}}><div style={lbl}>Sample companies</div><select value={bkCompany} onChange={e=>{setBkCompany(e.target.value);setBkQuery('');}} style={{width:'100%',padding:'9px 12px',borderRadius:9,border:'1px solid var(--border)',background:'var(--panel2)',color:'var(--text)',fontFamily:'inherit',fontSize:13,colorScheme:'var(--scheme)'}}>
+                {bkCompanies.map(c=><option key={c.hMy} value={String(c.hMy)}>{c.display_name} · {c.snapshots} snapshots</option>)}
+              </select></div>
+              <button onClick={runBK} style={runBtn}>{loading?'Running…':'Run prediction'}</button>
+            </div>
+            {loading && (<div><div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:16,marginBottom:22}}>{[0,1,2,3].map(i=><Skel key={i} h={104}/>)}</div><Skel h={340}/></div>)}
+            {ready && bkData && (<div>
+              {bkData.error && errBanner(bkData.error)}
+              {!bkData.company && !bkData.error && errBanner('no company found for that search')}
+              {bkData.company && (<>
+                <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap',marginBottom:18,padding:'14px 20px',borderRadius:12,background:'var(--panel2)',border:'1px solid var(--border)'}}>
+                  <div style={{fontSize:17,fontWeight:700}}>{bkData.company.display_name}</div>
+                  <span style={{fontSize:11,fontFamily:"'JetBrains Mono',monospace",color:'var(--muted)'}}>hMy {bkData.company.hMy}</span>
+                  {bkData.company.market && <span style={{fontSize:11.5,padding:'3px 10px',borderRadius:999,background:'var(--panel)',border:'1px solid var(--border)'}}>{bkData.company.market}</span>}
+                  {bkData.company.industry && <span style={{fontSize:11.5,padding:'3px 10px',borderRadius:999,background:'var(--panel)',border:'1px solid var(--border)'}}>{bkData.company.industry}</span>}
+                </div>
+                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:16,marginBottom:16}}>{kpis.map((k,i)=><KPI key={i} {...k}/>)}</div>
+                {bkData.scorecard && (<div style={{display:'flex',flexWrap:'wrap',gap:18,alignItems:'center',fontSize:12,color:'var(--muted)',marginBottom:18,padding:'11px 18px',borderRadius:10,background:'var(--panel2)',border:'1px solid var(--border)'}}>
+                  <span><b style={{color:'var(--text)'}}>Lifecycle:</b> <span style={{textTransform:'capitalize'}}>{bkData.scorecard.lifecycle||'—'}</span></span>
+                  <span><b style={{color:'var(--text)'}}>Lease:</b> {bkData.scorecard.months_to_lease_end!=null?bkData.scorecard.months_to_lease_end+' mo to expiry':'—'}</span>
+                  <span><b style={{color:'var(--text)'}}>Concept lift:</b> {(bkData.scorecard.concept_lift||1).toFixed(2)}×{bkData.scorecard.lift_tags?` · ${bkData.scorecard.lift_tags}`:''}</span>
+                  <span><b style={{color:'var(--text)'}}>REA score:</b> {bkData.scorecard.rea_score} · decile {bkData.scorecard.decile} (1=top)</span>
+                </div>)}
+                {!bkData.scorecard && (<div style={{padding:'10px 14px',borderRadius:9,background:'var(--panel2)',border:'1px solid var(--border)',color:'var(--muted)',fontSize:12,marginBottom:16}}>No ZoomInfo company linked for this prospect (the bridge covers ~46%) — showing the interim conversion signal only.</div>)}
+                <div style={{margin:'22px 2px 12px',borderTop:'1px solid var(--border)',paddingTop:16,fontSize:12.5,fontWeight:700,color:'var(--muted)'}}>Interim signals <span style={{fontWeight:400}}>— v0.3 conversion model (PR-AUC 0.108, data-limited) + rules score; directional, not the headline</span></div>
+                {bkData.rules_score_stale && (<div style={{padding:'10px 14px',borderRadius:9,background:'color-mix(in srgb,#f59e0b 12%,transparent)',border:'1px solid color-mix(in srgb,#f59e0b 35%,transparent)',color:'#f59e0b',fontSize:12,marginBottom:14}}>Current rules score is stale (last scored {bkData.current_rules_score&&bkData.current_rules_score.ScoredAt}).</div>)}
+                <BKChart/>
+                <div style={{...card,marginBottom:16}}>
+                  <div style={{fontSize:13,fontWeight:600,marginBottom:12}}>Risk tier over time</div>
+                  <div style={{display:'flex',gap:2,borderRadius:6,overflow:'hidden',height:26}}>
+                    {(bkData.history||[]).map((p,i)=><div key={i} title={`${p.snapshot_date} · ${(p.conversion_probability*100).toFixed(1)}% (${p.risk_tier})`} style={{flex:1,background:tierColor(p.risk_tier),opacity:.85}}></div>)}
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:10,color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace",marginTop:6}}><span>{bkData.history&&bkData.history[0]?bkData.history[0].snapshot_date:''}</span><span>{bkData.history&&bkData.history.length?bkData.history[bkData.history.length-1].snapshot_date:''}</span></div>
+                </div>
+                <div style={{borderRadius:14,border:'1px solid var(--border)',background:'var(--panel)',overflow:'hidden'}}>
+                  <div style={{padding:'16px 20px',borderBottom:'1px solid var(--border)',fontSize:13.5,fontWeight:600}}>Snapshot history</div>
+                  <div style={{overflowX:'auto',maxHeight:420,overflowY:'auto'}}>
+                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+                      <thead style={{position:'sticky',top:0,background:'var(--panel)'}}><tr>
+                        <th style={{textAlign:'left',padding:'11px 20px',fontSize:11,fontWeight:600,color:'var(--muted)'}}>Snapshot date</th>
+                        <th style={{textAlign:'right',padding:'11px 20px',fontSize:11,fontWeight:600,color:'var(--muted)'}}>Conversion probability</th>
+                        <th style={{textAlign:'left',padding:'11px 20px',fontSize:11,fontWeight:600,color:'var(--muted)'}}>Risk tier</th>
+                      </tr></thead>
+                      <tbody>
+                        {[...(bkData.history||[])].reverse().map((p,i)=>(<tr key={i} style={{borderTop:'1px solid var(--border)'}}>
+                          <td style={{padding:'11px 20px',fontFamily:"'JetBrains Mono',monospace"}}>{p.snapshot_date}</td>
+                          <td style={{padding:'11px 20px',textAlign:'right',fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>{(p.conversion_probability*100).toFixed(1)+'%'}</td>
+                          <td style={{padding:'11px 20px'}}><span style={tierBadge(p.risk_tier)}>{p.risk_tier}</span></td>
+                        </tr>))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div style={{fontSize:11,color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace",marginTop:14}}>{caption}</div>
+              </>)}
+            </div>)}
+          </div>)}
+
+          {/* ===== MK ===== */}
+          {view==='mk' && (<div>
+            <div style={{display:'flex',flexWrap:'wrap',alignItems:'flex-end',gap:18,padding:'18px 20px',borderRadius:14,border:'1px solid var(--border)',background:'var(--panel)',marginBottom:22}}>
+              <div><div style={lbl}>Segment type</div>
+                <div style={{display:'flex',background:'var(--panel2)',border:'1px solid var(--border)',borderRadius:10,padding:3}}>
+                  {['cohort','industry'].map(m=>(<button key={m} onClick={()=>{setMkMode(m); setMkKey(m==='cohort'?(mkCohorts[0]||'healthcare-vertical'):(mkIndustries[0]||'Banking'));}} style={{padding:'7px 18px',borderRadius:8,border:'none',cursor:'pointer',fontFamily:'inherit',fontSize:12.5,fontWeight:600,background:mkMode===m?'var(--accent)':'transparent',color:mkMode===m?'#fff':'var(--muted)',transition:'all .15s',textTransform:'capitalize'}}>{m}</button>))}
+                </div>
+              </div>
+              <div style={{minWidth:240}}><div style={lbl}>{mkMode==='cohort'?'Cohort':'Industry'}</div>
+                <select value={mkKey} onChange={e=>setMkKey(e.target.value)} style={{width:'100%',padding:'9px 12px',borderRadius:9,border:'1px solid var(--border)',background:'var(--panel2)',color:'var(--text)',fontFamily:'inherit',fontSize:13,colorScheme:'var(--scheme)'}}>
+                  {(mkMode==='cohort'?mkCohorts:mkIndustries).map(o=><option key={o} value={o}>{o}</option>)}
+                </select></div>
+              <button onClick={runMK} style={runBtn}>{loading?'Aggregating…':'Aggregate'}</button>
+            </div>
+            {loading && (<div><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16,marginBottom:22}}>{[0,1,2].map(i=><Skel key={i} h={104}/>)}</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}><Skel h={300}/><Skel h={300}/></div></div>)}
+            {ready && mkData && (<div>
+              {mkData.error && errBanner(mkData.error)}
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:16,marginBottom:20}}>{kpis.map((k,i)=><KPI key={i} {...k}/>)}</div>
+              {(!mkData.by_market||mkData.by_market.length===0) && (<div style={{padding:'14px 16px',borderRadius:10,background:'var(--panel2)',border:'1px solid var(--border)',color:'var(--muted)',fontSize:13,marginBottom:16}}>No companies found for this {mkData.variant||'segment'} · {mkData.segment}.</div>)}
+              <MKCharts/>
+              <div style={{fontSize:11,color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace",marginTop:14}}>{caption}</div>
+            </div>)}
+            <div style={{margin:'28px 2px 12px',borderTop:'1px solid var(--border)',paddingTop:20,fontSize:13,fontWeight:700}}>Global cohort ranking <span style={{fontSize:11,fontWeight:400,color:'var(--muted)'}}>— who to reach out to across ALL cohorts (static; independent of the segment selected above)</span></div>
+            <MKTargeting/>
+          </div>)}
+          {/* ===== MODEL VALIDATION ===== */}
+          {view==='mv' && (<div>
+            {loading && (<div><div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:16}}>{[0,1,2,3].map(i=><Skel key={i} h={104}/>)}</div><Skel h={340}/></div>)}
+            {!loading && <MV/>}
+          </div>)}
+        </main>
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+<script>
+(function(){
+  try {
+    var src = document.getElementById('app-src').textContent;
+    var out = window.Babel.transform(src, { presets: [['react', { runtime: 'classic' }]] }).code;
+    (0, eval)(out);
+  } catch (e) {
+    console.error('UI build error', e);
+    var r = document.getElementById('root');
+    if (r) r.innerHTML = '<pre style="color:#f87171;padding:24px;font-family:monospace;white-space:pre-wrap">UI build error: ' + (e && e.message) + '</pre>';
+  }
+})();
+</script>
+</body>
+</html>

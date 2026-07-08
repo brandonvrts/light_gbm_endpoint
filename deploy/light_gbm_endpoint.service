@@ -1,0 +1,26 @@
+# systemd unit for the light_gbm_endpoint API on the DGX Spark.
+# Recommended install as a USER service (avoids the '@' in the domain username):
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/light_gbm_endpoint.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now light_gbm_endpoint
+#   loginctl enable-linger "$USER"     # keep it running after logout
+# (For a system unit, set User=/Group= and install under /etc/systemd/system/.)
+[Unit]
+Description=light_gbm_endpoint - RTS shared LightGBM prediction API (CPU-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Documents/spark/light_gbm_endpoint
+ExecStart=%h/Documents/spark/light_gbm_endpoint/scripts/serve.sh
+Restart=always
+RestartSec=3
+Environment=GBME_PORT=8910
+Environment=GBME_WORKERS=1
+# CPU-only by design; cap so it never starves the GPU LLM/embedding workloads.
+CPUQuota=400%
+MemoryMax=4G
+
+[Install]
+WantedBy=default.target

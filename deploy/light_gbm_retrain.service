@@ -1,0 +1,12 @@
+[Unit]
+Description=light_gbm_endpoint retrain -> validate -> promote pipeline (gated, auto-rollback)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Documents/spark/light_gbm_endpoint
+Environment=PYTHONPATH=%h/Documents/spark/light_gbm_endpoint
+# Retrains each configured contract into a candidate bundle, promotes via default.txt
+# ONLY if it does not regress the walk-forward metric; else keeps the incumbent.
+# Never writes Yardi/InsightMart; appends decisions to monitoring/retrain.log.
+ExecStart=%h/Documents/spark/light_gbm_endpoint/.venv/bin/python scripts/retrain_pipeline.py

@@ -1,0 +1,24 @@
+{
+  "contract": "signal-desk-brokerage",
+  "version": "v0.2-corrected-scoopfree",
+  "feature_count": 29,
+  "source": "real-corrected-label",
+  "n_train": 33181,
+  "n_pos_rows": 259,
+  "n_converting_prospects": 54,
+  "trained_at": "20260624_081242",
+  "metrics": {
+    "cv": "group-disjoint 5-fold (by hMy), pooled OOF",
+    "pr_auc": 0.1113,
+    "pr_auc_no_skill": 0.0078,
+    "roc_auc": 0.9057,
+    "brier": 0.0552,
+    "log_loss": 0.1695,
+    "n_rows": 33181,
+    "n_pos_rows": 259,
+    "base_rate": 0.0078,
+    "n_prospects": 1881,
+    "n_converting_prospects": 54
+  },
+  "note": "Corrected, time-localized label via the deal->amendment bridge (replaces the leaky ProspectLabelSnapshot). Scoop-free (zi.Scoop has no pre-2026-03 history). DATA-LIMITED / INTERIM: few converting prospects in the 2024-11..2026-04 feature window; not yet a production-validated model. Pending historical feature backfill + ZoomInfo scoop history to reach ~500 positives."
+}

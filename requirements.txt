@@ -1,0 +1,23 @@
+# light_gbm_endpoint — serving dependencies
+# NOTE: pin the ML libs (lightgbm/scikit-learn/numpy/scipy) to the EXACT versions
+# of the multifamily v2 training env before loading frozen bundles — joblib pickles
+# are version-sensitive. The smoke test asserts a bundle loads + reproduces a prediction.
+
+# --- service ---
+fastapi
+uvicorn[standard]
+gunicorn            # process manager (Linux); on Windows use a service wrapper instead
+pydantic
+
+# --- auth (Azure AD / JWT bearer) ---
+pyjwt[crypto]
+
+# --- model + feature pipeline (lifted from multifamily v2) ---
+lightgbm
+scikit-learn==1.8.0   # pinned to the production bundle's training env (avoids unpickle/version skew)
+numpy
+pandas
+joblib
+
+# --- data access (identifier-in / Yardi) ---
+pyodbc              # needs ODBC Driver 18 for SQL Server (msodbcsql18; aarch64 on the DGX Spark)

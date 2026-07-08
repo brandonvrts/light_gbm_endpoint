@@ -1,0 +1,64 @@
+{
+  "contract": "signal-desk-brokerage",
+  "version": "v0.4-corrected-scoops",
+  "feature_count": 10,
+  "n_scoop_selected": 2,
+  "metrics": {
+    "estimator": "penalized",
+    "validation": "expanding-window rolling-origin (quarterly) pooled OOF",
+    "oof_n": 29946,
+    "oof_pos": 222,
+    "test_folds": 6,
+    "pr_auc": 0.115,
+    "pr_auc_no_skill": 0.0074,
+    "pr_auc_lift_vs_baseline_mean": 0.1105,
+    "pr_auc_lift_ci95": [
+      0.0837,
+      0.1418
+    ],
+    "roc_auc": 0.9244,
+    "brier": 0.0069,
+    "log_loss": 0.032,
+    "calib_intercept": -0.644,
+    "calib_slope": 0.797,
+    "per_fold": [
+      {
+        "q": 8100,
+        "n": 4973,
+        "pos": 49,
+        "pr_auc": 0.2169
+      },
+      {
+        "q": 8101,
+        "n": 5076,
+        "pos": 38,
+        "pr_auc": 0.0949
+      },
+      {
+        "q": 8102,
+        "n": 5238,
+        "pos": 26,
+        "pr_auc": 0.0684
+      },
+      {
+        "q": 8103,
+        "n": 5374,
+        "pos": 35,
+        "pr_auc": 0.2542
+      },
+      {
+        "q": 8104,
+        "n": 5523,
+        "pos": 48,
+        "pr_auc": 0.137
+      },
+      {
+        "q": 8105,
+        "n": 3762,
+        "pos": 26,
+        "pr_auc": 0.0858
+      }
+    ]
+  },
+  "note": "v0.3 + raw point-in-time scoop features (zi.Scoop 2022-2026 via ProspectCompanyLink). Promote ONLY if it beats v0.3 AND a serving-time scoop recompute is wired (snapshot scoop columns are stale)."
+}

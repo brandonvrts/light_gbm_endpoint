@@ -1,0 +1,17 @@
+# secrets
+.env
+
+# frozen model artifacts (immutable bundles are distributed out-of-band, not via git)
+*.joblib
+*.pkl
+bundles/**/*.joblib
+bundles/**/*.pkl
+
+# prediction logs
+monitoring/logs/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/

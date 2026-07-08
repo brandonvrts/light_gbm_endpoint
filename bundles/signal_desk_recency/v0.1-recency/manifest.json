@@ -1,0 +1,43 @@
+{
+  "contract": "signal-desk-recency",
+  "version": "v0.1-recency",
+  "grain": "company",
+  "broker_free": true,
+  "metrics": {
+    "models": {
+      "logistic": {
+        "auc": 0.505,
+        "auc_ci95": [
+          0.464,
+          0.545
+        ],
+        "pr_auc": 0.069,
+        "pr_auc_no_skill": 0.053,
+        "brier": 0.05
+      },
+      "lightgbm": {
+        "auc": 0.483,
+        "auc_ci95": [
+          0.444,
+          0.521
+        ],
+        "pr_auc": 0.061,
+        "pr_auc_no_skill": 0.053,
+        "brier": 0.05
+      }
+    },
+    "winner": "logistic",
+    "panel_rows": 31142,
+    "positives": 1865,
+    "base_rate": 0.0599,
+    "companies": 677,
+    "split": "2025-09-30",
+    "test_auc": 0.505,
+    "test_auc_ci95": [
+      0.464,
+      0.545
+    ],
+    "test_pr_auc": 0.069
+  },
+  "note": "Near-term deal-activity propensity from recency signal (broker-free). Serve from current rea.CompanyScoreSnapshot scoop fields + zi.Company firmographics."
+}

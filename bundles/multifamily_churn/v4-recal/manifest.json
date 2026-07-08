@@ -1,0 +1,15 @@
+{
+  "contract": "multifamily-churn",
+  "version": "v4-recal",
+  "bundle_version": "v4-anchor-recal",
+  "variant": "h180 recal (deployment - the one to score with)",
+  "source": "real-production",
+  "algorithm": "LightGBM + isotonic calibration + PlattRescaler anchored to 32.3% base rate",
+  "feature_count": 45,
+  "validated_walkforward": "13 folds: ROC-AUC 0.891, PR-AUC 0.945, Brier 0.083, log loss 0.291",
+  "trained_at": "20260619_1016",
+  "sklearn_pin": "1.8.0",
+  "origin": "RealtyRTS/multifamily-prediction@272604a : v2/models/churn_model_v4_h180_recal_20260619_1016.joblib",
+  "promoted_at": "2026-06-23",
+  "notes": "Real production bundle pulled from GitHub; replaces v0-standin. Loads via vendored platt_rescaler.py. Risk-tier cutpoints are guarded in code (bundle ships degenerate risk_low_max/risk_medium_max); calibrated probability is served untouched. h60 ranker also available in the repo if a near-term variant is wanted."
+}

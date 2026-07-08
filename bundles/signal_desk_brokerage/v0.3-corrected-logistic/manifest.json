@@ -1,0 +1,23 @@
+{
+  "contract": "signal-desk-brokerage",
+  "version": "v0.3-corrected-logistic",
+  "feature_count": 8,
+  "source": "real-corrected-label",
+  "estimator": "firth-flic",
+  "trained_at": "20260624_093513",
+  "metrics": {
+    "pr_auc": 0.1082,
+    "pr_auc_no_skill": 0.0074,
+    "pr_auc_lift_ci95": [
+      0.0792,
+      0.1342
+    ],
+    "roc_auc": 0.924,
+    "brier": 0.0069,
+    "calib_intercept": -0.786,
+    "calib_slope": 0.751,
+    "oof_pos": 222,
+    "test_folds": 6
+  },
+  "note": "Small-n-defensible: elastic-net selection + (penalized vs Firth+FLIC) + rolling-origin walk-forward + paired-bootstrap CI, no resampling. Replaces v0.2 LightGBM. INTERIM/data-limited until historical signal backfill (Revelio/Crunchbase/Form D/press) lifts the converting-prospect count."
+}
