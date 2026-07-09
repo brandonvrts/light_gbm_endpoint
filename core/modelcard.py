@@ -150,6 +150,42 @@ def _dealwin_card() -> dict | None:
         b = registry.load("signal_desk_dealwin")
     except Exception:
         return None
+    if b.get("bundle_format") == "dealwin-lgbm-v2":
+        m = b.get("metrics") or {}
+        yo, yz = m.get("yardi_only", {}), m.get("yardi_plus_zi", {})
+        man = registry.manifest("signal_desk_dealwin")
+        return {
+            "contract": "signal-desk-dealwin", "status": "shadow (no leakage-free signal — not served)",
+            "label": "Deal-win re-ranker — LEAKAGE-FREE rebuild (SHADOW)",
+            "version": b.get("version"), "algorithm": b.get("algorithm"), "grain": "deal",
+            "feature_count": len(b.get("feature_columns", [])),
+            "training": {
+                "design": "P(win | active pursuit): resolved Yardi deals WITH a TenantId, CreatedAt>=2024 "
+                          "(StageResolved=Executed=won vs Cancelled/Dead=lost). Group-disjoint by TenantId; "
+                          "strictly point-in-time features (scoops OriginalPublishedDate <= deal-open).",
+                "excluded_leaky": b.get("excluded_leaky"),
+                "resolved_deals": man.get("resolved_deals"), "won": man.get("won"),
+                "win_rate": man.get("win_rate"),
+                "distinct_winning_tenants": man.get("distinct_winning_tenants"),
+            },
+            "discrimination": {
+                "yardi_only_auc": yo.get("mean_model_auc"), "yardi_only_lift": yo.get("mean_auc_lift"),
+                "yardi_plus_zi_auc": yz.get("mean_model_auc"), "yardi_plus_zi_lift": yz.get("mean_auc_lift"),
+                "cohort_baseline_auc": yo.get("mean_cohort_auc"),
+                "verdict": "No leakage-free signal: model AUC ~0.50, BELOW the near-random cohort baseline "
+                           "(~0.55); AUC-lift negative on every fold; neither featureset graduates. ZoomInfo "
+                           "(firmographics + point-in-time scoops) adds NOTHING at the deal grain. This CONFIRMS "
+                           "the v0.1 finding that the prior +0.069 'edge' was entirely leadBroker — a leaked "
+                           "broker-selection era-proxy (prevalence 7%->40% train->test).",
+            },
+            "validation": "group-disjoint (TenantId) expanding-window rolling-origin walk-forward + "
+                          "Platt-calibrated pooled OOF + paired-bootstrap AUC-lift CI vs the train-only cohort prior",
+            "graduates": b.get("graduates"), "ablation_zi_helps": b.get("ablation_zi_helps"),
+            "notes": "Whether an ACTIVE pursuit executes is idiosyncratic (price/negotiation/timing), not a "
+                     "function of firmographics/scoops/size — so deal-grain win prediction is not a product on "
+                     "current safe features. Served brokerage product stays the company scorecard + v0.3 "
+                     "cold-prospect model; the real lever is point-in-time stage-velocity + more labeled positives.",
+        }
     met = b.get("metrics") or {}
     return {
         "contract": "signal-desk-dealwin", "status": "shadow",
@@ -188,9 +224,44 @@ def _dealwin_card() -> dict | None:
     }
 
 
+def _spacedemand_card() -> dict | None:
+    try:
+        b = registry.load("signal_desk_spacedemand")
+    except Exception:
+        return None
+    m = (b.get("metrics") or {}).get("lightgbm") or {}
+    base = m.get("base_rate") or 0.0
+    return {
+        "contract": "signal-desk-spacedemand", "status": "prototype",
+        "label": "PROTOTYPE · space-demand lead-gen",
+        "version": b.get("version"), "algorithm": b.get("algorithm"), "grain": b.get("grain"),
+        "feature_count": len(b.get("feature_columns", [])),
+        "discrimination": {
+            "pr_auc": m.get("pr_auc"), "roc_auc": m.get("roc_auc"), "base_rate": base,
+            "pr_auc_vs_base_x": round((m.get("pr_auc") or 0) / base, 1) if base else None,
+            "pr_auc_lift_ci95": m.get("pr_auc_lift_ci95"), "brier": m.get("brier"),
+            "drivers": "~46% firmographics (size/age), ~40% scoop-event dynamics, ~8% prior-relocation",
+        },
+        "training": {
+            "design": ("Self-contained ZoomInfo scoop panel (2022-2026, 88% IA/NE); company-month grain; "
+                       "label = a Facilities Relocation/Expansion scoop within 180d. Independent of the "
+                       "scarce (~54) Yardi conversion labels."),
+            "positive_company_months": m.get("oof_pos"), "base_rate": base,
+            "companies": "~2,100 scooped (~1,900 IA/NE scored)",
+        },
+        "validation": ("expanding-window rolling-origin walk-forward with a 180d embargo + Platt-calibrated "
+                       f"pooled OOF + paired-bootstrap PR-AUC lift; {m.get('test_folds') or len(m.get('folds', []))} folds"),
+        "serves": "GET /brokerage/space-demand-leads?market=IA,NE",
+        "notes": ("Answers 'who will NEED space' (a ZI-detected relocation/expansion announcement), NOT 'who "
+                  "will sign with us'. A prioritization/lead list, not broker-facing truth. PR-AUC is "
+                  "model-saturated ~0.34 on this label (features/tuning/other models don't move it); gains "
+                  "need label/data work (Yardi ground-truth fusion, real-estate topic mining), not tuning."),
+    }
+
+
 def build_all() -> list:
     out = []
-    for fn in (_mf_card, _bk_card, _mk_card, _dealwin_card):
+    for fn in (_mf_card, _bk_card, _mk_card, _dealwin_card, _spacedemand_card):
         try:
             c = fn()
             if c:

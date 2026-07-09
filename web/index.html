@@ -61,16 +61,19 @@ const api = {
     const ids = (buildings&&buildings.length?buildings:BUILDINGS).map(n=>NAME_TO_ID[n]).filter(Boolean);
     return jpost('/predict/multifamily-churn', {property_ids:ids, as_of:asOf});  // no limit -> ALL occupied units
   },
-  multifamilyBacktest: ({buildings, asOf}) => {
+  multifamilyLeaseWindow: ({buildings, start, end}) => {
     const ids = (buildings&&buildings.length?buildings:BUILDINGS).map(n=>NAME_TO_ID[n]).filter(Boolean);
-    return jpost('/multifamily/backtest', {property_ids:ids, as_of:asOf, limit:250});  // sampled for speed
+    return jget(`/multifamily/lease-window?start=${start}&end=${end}&properties=${ids.join(',')}`);
   },
+  multifamilyTenant: (scode, asOf) => jget(`/multifamily/tenant/${encodeURIComponent(String(scode||'').trim())}`+(asOf?`?as_of=${asOf}`:'')),
+  multifamilyTenantSearch: (q, asOf) => jget(`/multifamily/tenant/search?q=${encodeURIComponent(String(q||'').trim())}`+(asOf?`&as_of=${asOf}`:'')),
   listBrokerageCompanies: async () => {
     const d = await jget('/brokerage/companies?limit=60');
     return (d.companies||[]).map(c=>({hMy:c.hMy, display_name:c.display_name, snapshots:c.snapshots}));
   },
   predictBrokerage: ({companyId, query}) => jpost('/predict/signal-desk-brokerage', {company:String(query||companyId)}),
   brokerageScorecard: (sort) => jget('/brokerage/scorecard?limit=25&sort='+(sort||'winprob')),
+  spaceDemandLeads: (market) => jget('/brokerage/space-demand-leads?limit=25'+(market?'&market='+encodeURIComponent(market):'')),
   aggregateMarketing: ({mode, key}) => jpost('/predict/marketing', {variant:mode, key}),
   marketingOptions: () => jget('/marketing/options'),
   models: () => jget('/models'),
@@ -90,11 +93,15 @@ function App(){
   const [mfData,setMfData]=useState(null);
   const [selBuildings,setSelBuildings]=useState([...BUILDINGS]);
   const [asOf,setAsOf]=useState('2026-06-23');
-  const [mfBacktest,setMfBacktest]=useState(null);
-  const [btLoading,setBtLoading]=useState(false);
   const [maxUnits,setMaxUnits]=useState(120);
   const [sortKey,setSortKey]=useState('churn_probability');
   const [sortDir,setSortDir]=useState('desc');
+  const [mfMode,setMfMode]=useState('asof');           // 'asof' snapshot | 'window' lease-expiration window
+  const [winStart,setWinStart]=useState('2026-06-01');
+  const [winEnd,setWinEnd]=useState('2026-06-30');
+  const [tenantQuery,setTenantQuery]=useState('');     // single-resident lookup (SCODE or name)
+  const [tenantRes,setTenantRes]=useState(null);
+  const [tenantLoading,setTenantLoading]=useState(false);
   // bk
   const [bkData,setBkData]=useState(null);
   const [bkCompanies,setBkCompanies]=useState([]);
@@ -102,6 +109,8 @@ function App(){
   const [bkQuery,setBkQuery]=useState('');
   const [bkScorecard,setBkScorecard]=useState(null);
   const [bkSort,setBkSort]=useState('winprob');
+  const [spdData,setSpdData]=useState(null);
+  const [spdLoading,setSpdLoading]=useState(false);
   // mk
   const [mkData,setMkData]=useState(null);
   const [mkMode,setMkMode]=useState('cohort');
@@ -123,12 +132,16 @@ function App(){
     const step=(now)=>{ const p=Math.min(1,(now-t0)/dur); setAnim(1-Math.pow(1-p,3)); if(p<1) requestAnimationFrame(step); };
     requestAnimationFrame(step); };
 
-  const runMF=async()=>{ setLoading(true); try{ const d=await api.predictMultifamily({buildings:selBuildings,asOf}); setMfData(d);}catch(e){setMfData({error:String(e),results:[]});} setLoading(false); startTween(); };
-  const runBacktest=async()=>{ setBtLoading(true); setMfBacktest(null); try{ setMfBacktest(await api.multifamilyBacktest({buildings:selBuildings,asOf})); }catch(e){ setMfBacktest({error:String(e)}); } setBtLoading(false); };
+  const runMF=async()=>{ setLoading(true); setMfMode('asof'); try{ const d=await api.predictMultifamily({buildings:selBuildings,asOf}); setMfData(d);}catch(e){setMfData({error:String(e),results:[]});} setLoading(false); startTween(); };
+  const runWindow=async()=>{ setLoading(true); setMfMode('window'); try{ const d=await api.multifamilyLeaseWindow({buildings:selBuildings,start:winStart,end:winEnd}); setMfData(d);}catch(e){setMfData({error:String(e),results:[]});} setLoading(false); startTween(); };
+  const lookupTenant=async()=>{ const q=(tenantQuery||'').trim(); if(!q) return; setTenantLoading(true); setTenantRes(null);
+    try{ const isScode=/^t\d+$/i.test(q); const d = isScode ? await api.multifamilyTenant(q) : await api.multifamilyTenantSearch(q); setTenantRes(d); }
+    catch(e){ setTenantRes({error:String(e)}); } setTenantLoading(false); };
   const runBK=async()=>{ setLoading(true); try{ const d=await api.predictBrokerage({companyId:bkCompany,query:bkQuery}); setBkData(d); if(d.company) setBkCompany(String(d.company.hMy)); }catch(e){setBkData({error:String(e)});} setLoading(false); startTween(); };
   const runMK=async()=>{ setLoading(true); try{ const d=await api.aggregateMarketing({mode:mkMode,key:mkKey}); setMkData(d);}catch(e){setMkData({error:String(e)});} setLoading(false); startTween(); };
   const loadModels=async()=>{ setLoading(true); try{ setModelCards(await api.models()); }catch(e){ setModelCards([{error:String(e)}]); } setLoading(false); };
   const loadScorecard=async(s)=>{ setBkSort(s); try{ setBkScorecard(await api.brokerageScorecard(s)); }catch(e){} };
+  const loadSpaceDemand=async()=>{ setSpdLoading(true); try{ setSpdData(await api.spaceDemandLeads('IA,NE')); }catch(e){ setSpdData({error:String(e)}); } setSpdLoading(false); };
 
   useEffect(()=>{ (async()=>{
     try{ setBkCompanies(await api.listBrokerageCompanies()); }catch(e){}
@@ -143,7 +156,7 @@ function App(){
     runMF();
   })(); },[]);
 
-  const switchView=(v)=>{ setView(v); if(v==='bk'&&!bkData) runBK(); if(v==='mk'&&!mkData) runMK(); if(v==='mv'&&!modelCards) loadModels(); };
+  const switchView=(v)=>{ setView(v); if(v==='bk'&&!bkData) runBK(); if(v==='bk'&&!spdData) loadSpaceDemand(); if(v==='mk'&&!mkData) runMK(); if(v==='mv'&&!modelCards) loadModels(); };
 
   const ready = !loading && !!(view==='mf'?mfData:view==='bk'?bkData:view==='mk'?mkData:modelCards);
   const headers = {
@@ -164,6 +177,7 @@ function App(){
   const chartCard = {...card,padding:'18px 20px 8px'};
   const runBtn = {padding:'10px 22px',borderRadius:10,border:'none',cursor:loading?'wait':'pointer',fontFamily:'inherit',fontSize:13,fontWeight:600,color:'#fff',background:'linear-gradient(135deg,#5b8def,#6366f1)',boxShadow:'0 2px 12px rgba(91,141,239,.35)',opacity:loading?0.6:1,transition:'opacity .15s'};
   const lbl = {fontSize:11,fontWeight:600,color:'var(--muted)',marginBottom:8};
+  const dateInput = {padding:'9px 12px',borderRadius:9,border:'1px solid var(--border)',background:'var(--panel2)',color:'var(--text)',fontFamily:"'JetBrains Mono',monospace",fontSize:12.5,colorScheme:'var(--scheme)'};
   const tip = { contentStyle:{background:T.panel,border:`1px solid ${T.grid}`,borderRadius:10,fontSize:12,color:T.text,fontFamily:"'Inter Tight',sans-serif"}, cursor:{fill:'rgba(127,127,140,0.08)'}, itemStyle:{color:T.text}, labelStyle:{color:T.tick} };
   const axTick = {fill:T.tick,fontSize:11,fontFamily:"'JetBrains Mono',monospace"};
   const axisLine = {stroke:T.grid};
@@ -231,6 +245,32 @@ function App(){
           </RC.BarChart></RC.ResponsiveContainer></div>
       </div>
     </>);
+  }
+
+  function TenantResult({res}){
+    if(!res) return null;
+    if(res.error) return <div style={{width:'100%'}}>{errBanner(res.error)}</div>;
+    const t = res.tenant || (res.found!==undefined ? res : null);
+    if(t){
+      if(!t.found) return <div style={{width:'100%',padding:'12px 14px',borderRadius:10,background:'var(--panel2)',border:'1px solid var(--border)',color:'var(--muted)',fontSize:13}}>{t.summary||'No current resident found.'}</div>;
+      const cp=t.churn_probability||0, sp=(t.stay_probability!=null?t.stay_probability:1-cp);
+      return (<div style={{width:'100%',display:'flex',flexWrap:'wrap',gap:20,alignItems:'center',padding:'14px 16px',borderRadius:12,background:'var(--panel2)',border:'1px solid var(--border)',marginTop:6}}>
+        <div style={{minWidth:210}}><div style={{fontSize:14,fontWeight:700}}>{t.full_name}</div><div style={{fontSize:11.5,color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace"}}>{t.scode} · unit {t.unit} · {t.property}</div></div>
+        <div><div style={lbl}>Stay probability</div><div style={{fontSize:20,fontWeight:700,color:'#22c55e'}}>{(sp*100).toFixed(1)}%</div></div>
+        <div><div style={lbl}>Move-out risk</div><div style={{fontSize:20,fontWeight:700}}>{(cp*100).toFixed(1)}%</div></div>
+        <div><div style={lbl}>Tier</div><span style={tierBadge(t.risk_tier)}>{t.risk_tier}</span></div>
+        <div><div style={lbl}>Notice</div>{t.has_notice?<span style={{color:'#f59e0b',fontWeight:600,fontSize:12}}>Filed</span>:<span style={{color:'var(--muted)',fontSize:12}}>—</span>}</div>
+        <div style={{flexBasis:'100%',fontSize:12,color:'var(--muted)',lineHeight:1.5,borderTop:'1px solid var(--border)',paddingTop:8}}><span style={{fontWeight:600,color:'var(--text)'}}>Chatbot summary:</span> {t.summary}</div>
+      </div>);
+    }
+    const matches = res.matches||[];
+    if(matches.length===0) return <div style={{width:'100%',padding:'12px 14px',borderRadius:10,background:'var(--panel2)',border:'1px solid var(--border)',color:'var(--muted)',fontSize:13}}>No current resident matches “{res.query}”.</div>;
+    return (<div style={{width:'100%',marginTop:6}}>
+      <div style={{fontSize:12,color:'var(--muted)',marginBottom:6}}>{matches.length} matches for “{res.query}” — click one to score:</div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:8}}>
+        {matches.map((m,i)=>(<button key={i} onClick={()=>{setTenantQuery(m.scode); api.multifamilyTenant(m.scode).then(setTenantRes).catch(e=>setTenantRes({error:String(e)}));}} style={{padding:'7px 12px',borderRadius:9,border:'1px solid var(--border)',background:'var(--panel2)',color:'var(--text)',cursor:'pointer',fontFamily:'inherit',fontSize:12,textAlign:'left'}}>{m.full_name} <span style={{color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace"}}>· {m.scode} · {m.unit}</span></button>))}
+      </div>
+    </div>);
   }
 
   function BKScorecard(){
@@ -366,9 +406,46 @@ function App(){
   const fmtP=(x)=> (x===null||x===undefined)?'—':(typeof x==='number'?(Math.abs(x)<=1?(x*100).toFixed(1)+'%':x.toFixed(3)):String(x));
   const statRow=(label,val,sub)=>(<div style={{display:'flex',justifyContent:'space-between',gap:10,padding:'7px 0',borderBottom:'1px solid var(--border)',fontSize:12.5}}><span style={{color:'var(--muted)'}}>{label}</span><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:600,textAlign:'right'}}>{val}{sub?<span style={{color:'var(--muted)',fontWeight:400}}> {sub}</span>:''}</span></div>);
 
+  function SpaceDemand(){
+    const d=spdData;
+    return (<div style={{marginBottom:26,paddingBottom:20,borderBottom:'1px solid var(--border)'}}>
+      <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap',marginBottom:6}}>
+        <div style={{fontSize:14,fontWeight:700}}>Space-Demand Leads</div>
+        <span style={{fontSize:10,fontWeight:700,letterSpacing:'.06em',padding:'2px 8px',borderRadius:999,color:'#14b8a6',background:'color-mix(in srgb,#14b8a6 15%,transparent)',border:'1px solid color-mix(in srgb,#14b8a6 40%,transparent)'}}>PROTOTYPE</span>
+        <span style={{fontSize:11.5,color:'var(--muted)'}}>ZoomInfo relocation/expansion propensity — who will NEED space (~180d), not who signs with us</span>
+        <button onClick={loadSpaceDemand} style={{marginLeft:'auto',padding:'6px 12px',borderRadius:8,border:'1px solid var(--border)',background:'var(--panel2)',color:'var(--text)',cursor:'pointer',fontFamily:'inherit',fontSize:12}}>{spdLoading?'Loading…':'Refresh'}</button>
+      </div>
+      {d&&d.metrics&&(<div style={{fontSize:11,color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace",marginBottom:12}}>model {d.model_version} · PR-AUC {fmtN(d.metrics.pr_auc)} ({d.metrics.pr_auc_vs_base_x}× base {fmtN(d.metrics.base_rate)}) · ROC {fmtN(d.metrics.roc_auc)} · as-of {d.as_of} · IA/NE ({d.scored_in_market} scored)</div>)}
+      {spdLoading&&!d&&<Skel h={240}/>}
+      {d&&d.error&&errBanner(d.error)}
+      {d&&!d.error&&(!d.leads||d.leads.length===0)&&<div style={{padding:'12px 16px',borderRadius:10,background:'var(--panel2)',border:'1px solid var(--border)',color:'var(--muted)',fontSize:13}}>No in-market leads scored.</div>}
+      {d&&d.leads&&d.leads.length>0&&(<div style={{borderRadius:14,border:'1px solid var(--border)',background:'var(--panel)',overflow:'hidden'}}>
+        <div style={{overflowX:'auto',maxHeight:460,overflowY:'auto'}}>
+          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12.5}}>
+            <thead style={{position:'sticky',top:0,background:'var(--panel)',zIndex:1}}><tr>
+              {['#','Company','Mkt','Propensity','Signals','Why'].map(h=><th key={h} style={{textAlign:'left',padding:'10px 14px',fontSize:10.5,fontWeight:600,color:'var(--muted)',whiteSpace:'nowrap'}}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {d.leads.map((r,i)=>{const sg=r.signals||{}; const chips=[]; if(sg.had_prior_reloc)chips.push('prior move'); if(sg.hiring_365d>0)chips.push('hiring '+sg.hiring_365d); if(sg.fundmna_365d>0)chips.push('fund/M&A'); if(sg.execmove_365d>0)chips.push('exec'); if(sg.project_365d>0)chips.push('project');
+                return (<tr key={i} style={{borderTop:'1px solid var(--border)'}}>
+                  <td style={{padding:'10px 14px',color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace"}}>{r.rank}</td>
+                  <td style={{padding:'10px 14px',fontWeight:600}}>{r.company}</td>
+                  <td style={{padding:'10px 14px',color:'var(--muted)'}}>{r.state}</td>
+                  <td style={{padding:'10px 14px'}}><span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700,color:r.propensity>=0.3?'#14b8a6':'var(--text)'}}>{(r.propensity*100).toFixed(1)+'%'}</span></td>
+                  <td style={{padding:'10px 14px',fontSize:11,color:'var(--muted)'}}>{(chips.join(' · ')||'—')}{sg.days_since_scoop!=null?` · ${sg.days_since_scoop}d ago`:''}</td>
+                  <td style={{padding:'10px 14px',fontSize:11.5}}>{r.why}</td>
+                </tr>);})}
+            </tbody>
+          </table>
+        </div>
+      </div>)}
+      {d&&d.note&&<div style={{fontSize:10.5,color:'var(--muted)',marginTop:8,lineHeight:1.5}}>{d.note}</div>}
+    </div>);
+  }
+
   function MV(){
     if(!modelCards) return null;
-    const sCol=(s)=> s==='real-production'?'#16a34a':s==='interim-standin'?'#f59e0b':s==='interim-corrected'?'#0ea5e9':s==='shadow'?'#a78bfa':'#94a3b8';
+    const sCol=(s)=> s==='real-production'?'#16a34a':s==='interim-standin'?'#f59e0b':s==='interim-corrected'?'#0ea5e9':s==='shadow'?'#a78bfa':s==='prototype'?'#14b8a6':'#94a3b8';
     return (<div>
       {modelCards.map((c,ci)=>{
         if(c.error) return <div key={ci} style={{...card,marginBottom:16,color:'#f87171'}}>error: {c.error}</div>;
@@ -495,7 +572,28 @@ function App(){
             {c.notes && <div style={{fontSize:12,color:'var(--muted)',marginTop:8}}>{c.notes}</div>}
           </div>)}
 
-          {c.status==='aggregate' && (<div style={{fontSize:13,color:'var(--muted)',lineHeight:1.5}}>{c.notes}</div>)}
+          {c.status==='prototype' && (<div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,marginBottom:12}}>
+              <KPI label="PR-AUC (rolling-origin)" display={fmtN(D.pr_auc)} color="#14b8a6" sub={`${D.pr_auc_vs_base_x}× base ${fmtN(D.base_rate)}`}/>
+              <KPI label="ROC-AUC" display={fmtN(D.roc_auc)} sub="imbalance-inflated"/>
+              <KPI label="Brier" display={fmtN(D.brier)} sub={(D.pr_auc_lift_ci95||[]).length?`lift CI ${fmtN(D.pr_auc_lift_ci95[0])}–${fmtN(D.pr_auc_lift_ci95[1])}`:''}/>
+              <KPI label="Positive company-months" display={TR.positive_company_months} color="#14b8a6" sub={`base ${fmtP(D.base_rate)}`}/>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16,marginBottom:12}}>
+              <div style={card}>
+                <div style={{fontSize:13.5,fontWeight:600,marginBottom:10}}>How it was trained</div>
+                <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5,marginBottom:8}}>{TR.design}</div>
+                <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5,marginBottom:8}}>{c.validation}</div>
+                {statRow('Companies', TR.companies)}
+                {statRow('Serves', c.serves)}
+              </div>
+              <div style={card}>
+                <div style={{fontSize:13.5,fontWeight:600,marginBottom:10}}>Signal drivers</div>
+                <div style={{fontSize:12.5,color:'var(--muted)',lineHeight:1.5}}>{D.drivers}</div>
+              </div>
+            </div>
+            {c.notes && <div style={{fontSize:12,color:'var(--muted)',marginTop:8}}>{c.notes}</div>}
+          </div>)}
         </div>);
       })}
     </div>);
@@ -566,6 +664,15 @@ function App(){
   const dir=sortDir==='asc'?1:-1;
   const mfSorted = mfData&&mfData.results? [...mfData.results].sort((a,b)=>{const x=a[sortKey],y=b[sortKey]; return (x<y?-1:x>y?1:0)*dir;}) : [];
   const mfColsDef=[['scode','Tenant','left'],['property','Property','left'],['unit','Unit','left'],['churn_probability','Move-out prob','right'],['risk_tier','Tier','left'],['has_notice','Notice','left'],['actual_churn','Actual','center']];
+  // Self-verify: realized move-outs for a historical as-of (plain counts, NOT a metrics harness)
+  const mfKnownAC = r => r.actual_churn!==null && r.actual_churn!==undefined && r.actual_churn!=='';
+  const mfLabeled = ((mfData&&mfData.results)||[]).filter(mfKnownAC);
+  const mfChurned = mfLabeled.filter(r=>Number(r.actual_churn)===1).length;
+  const mfActualRate = mfLabeled.length? mfChurned/mfLabeled.length : null;
+  const mfMeanPred = (mfData&&mfData.results&&mfData.results.length)? mfData.results.reduce((a,r)=>a+r.churn_probability,0)/mfData.results.length : null;
+  const mfAsOf = (mfData&&mfData.as_of)||asOf;
+  const mfDaysAgo = Math.round((Date.now()-new Date(mfAsOf+'T00:00:00').getTime())/86400000);
+  const mfCensored = mfDaysAgo < 180;
 
   const navItems=[{key:'mf',icon:'M',ib:'color-mix(in srgb,#5b8def 18%,transparent)',ic:'#7aa5f5',title:'Multifamily',sub:'Tenant Move-Out Risk'},
     {key:'bk',icon:'B',ib:'color-mix(in srgb,#8b5cf6 18%,transparent)',ic:'#a78bfa',title:'Brokerage',sub:'Prospect Conversion'},
@@ -627,39 +734,34 @@ function App(){
                       style={{padding:'7px 13px',borderRadius:999,cursor:'pointer',fontFamily:'inherit',fontSize:12,fontWeight:500,transition:'all .15s',border:`1px solid ${active?'transparent':'var(--border)'}`,background:active?'color-mix(in srgb,#5b8def 20%,transparent)':'var(--panel2)',color:active?'#9bbbf7':'var(--muted)'}}>{name}</button>);})}
                 </div>
               </div>
-              <div><div style={lbl}>As-of date</div><input type="date" value={asOf} onChange={e=>setAsOf(e.target.value)} style={{padding:'9px 12px',borderRadius:9,border:'1px solid var(--border)',background:'var(--panel2)',color:'var(--text)',fontFamily:"'JetBrains Mono',monospace",fontSize:12.5,colorScheme:'var(--scheme)'}}/></div>
-              <div style={{minWidth:170}}><div style={lbl}>Scope</div><div style={{padding:'9px 12px',borderRadius:9,border:'1px solid var(--border)',background:'var(--panel2)',fontSize:12.5,color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace"}}>all occupied units{mfData&&mfData.eligible_units?` · ${mfData.eligible_units}`:''}</div></div>
-              <button onClick={runMF} style={runBtn}>{loading?'Running…':'Run prediction'}</button>
-              <button onClick={runBacktest} style={{padding:'10px 18px',borderRadius:9,border:'1px solid var(--accent)',background:'transparent',color:'var(--accent)',cursor:'pointer',fontFamily:'inherit',fontSize:13,fontWeight:600}}>{btLoading?'Backtesting…':'Backtest this date'}</button>
+              <div><div style={lbl}>As-of date</div><input type="date" value={asOf} onChange={e=>setAsOf(e.target.value)} style={dateInput}/></div>
+              <button onClick={runMF} style={runBtn}>{loading&&mfMode==='asof'?'Running…':'Run prediction'}</button>
+              <div style={{flexBasis:'100%',display:'flex',alignItems:'center',gap:10,margin:'2px 0'}}><div style={{flex:1,height:1,background:'var(--border)'}}></div><span style={{fontSize:10.5,fontWeight:600,letterSpacing:'.06em',textTransform:'uppercase',color:'var(--muted)'}}>or — residents whose lease expires in a window</span><div style={{flex:1,height:1,background:'var(--border)'}}></div></div>
+              <div><div style={lbl}>Expires from</div><input type="date" value={winStart} onChange={e=>setWinStart(e.target.value)} style={dateInput}/></div>
+              <div><div style={lbl}>Expires to</div><input type="date" value={winEnd} onChange={e=>setWinEnd(e.target.value)} style={dateInput}/></div>
+              <button onClick={runWindow} style={{...runBtn,background:'transparent',color:'var(--accent)',border:'1px solid var(--accent)',boxShadow:'none'}}>{loading&&mfMode==='window'?'Loading…':'Show expiring leases'}</button>
+              <div style={{minWidth:210}}><div style={lbl}>Scope</div><div style={{padding:'9px 12px',borderRadius:9,border:'1px solid var(--border)',background:'var(--panel2)',fontSize:12.5,color:'var(--muted)',fontFamily:"'JetBrains Mono',monospace"}}>{mfMode==='window'?`expiring ${(mfData&&mfData.window_start)||winStart} → ${(mfData&&mfData.window_end)||winEnd}`:'all occupied units'}{mfData&&mfData.eligible_units?` · ${mfData.eligible_units}`:''}</div></div>
             </div>
-            {(btLoading||mfBacktest) && (<div style={{...card,marginBottom:22,border:'1px solid var(--accent)'}}>
-              <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>Backtest · predicted vs actual <span style={{fontSize:11,fontWeight:400,color:'var(--muted)'}}>— out-of-time validation on the {asOf} cohort (sample of 250)</span></div>
-              {btLoading && (<div style={{color:'var(--muted)',fontSize:12,padding:'8px 0'}}>Scoring ~250 units as of {asOf} and comparing to realized move-outs… (~1 min)</div>)}
-              {mfBacktest&&mfBacktest.error && errBanner(mfBacktest.error)}
-              {mfBacktest&&mfBacktest.label_censored && (<div style={{padding:'10px 14px',borderRadius:9,background:'color-mix(in srgb,#f59e0b 12%,transparent)',border:'1px solid color-mix(in srgb,#f59e0b 35%,transparent)',color:'#f59e0b',fontSize:12,margin:'8px 0'}}>This date is within the 180-day horizon — move-outs not fully realized (labels censored). Pick a date ≥180 days ago.</div>)}
-              {mfBacktest&&mfBacktest.roc_auc!=null && (<div>
-                <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14,margin:'12px 0'}}>
-                  <KPI label="ROC-AUC (out-of-time)" display={fmtN(mfBacktest.roc_auc)} color="#22c55e" sub="vs 0.893 walk-forward"/>
-                  <KPI label="Brier" display={fmtN(mfBacktest.brier)} sub={`log loss ${fmtN(mfBacktest.log_loss)}`}/>
-                  <KPI label="Actual churn rate" display={pct(mfBacktest.base_rate,1)} sub={`mean predicted ${pct(mfBacktest.mean_predicted,1)}`}/>
-                  <KPI label="Labeled units" display={mfBacktest.labeled_units} sub={`of ${mfBacktest.scored_units} scored`}/>
-                </div>
-                <div style={{fontSize:12.5,fontWeight:600,margin:'10px 0 6px'}}>Calibration — predicted vs actual per band</div>
-                <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
-                  <thead><tr>{['Probability band','Units','Mean predicted','Actual churn rate'].map(h=><th key={h} style={{textAlign:'left',padding:'6px 12px',fontSize:10.5,fontWeight:600,color:'var(--muted)'}}>{h}</th>)}</tr></thead>
-                  <tbody>{(mfBacktest.calibration||[]).map((c,i)=>(<tr key={i} style={{borderTop:'1px solid var(--border)'}}>
-                    <td style={{padding:'6px 12px'}}>{c.bin}</td><td style={{padding:'6px 12px',fontFamily:"'JetBrains Mono',monospace"}}>{c.n}</td>
-                    <td style={{padding:'6px 12px',fontFamily:"'JetBrains Mono',monospace"}}>{(c.pred_mean*100).toFixed(1)}%</td>
-                    <td style={{padding:'6px 12px',fontFamily:"'JetBrains Mono',monospace",fontWeight:600,color:'#22c55e'}}>{(c.actual_rate*100).toFixed(1)}%</td>
-                  </tr>))}</tbody>
-                </table>
-                {mfBacktest.caveat && <div style={{fontSize:11,color:'var(--muted)',marginTop:10,lineHeight:1.5}}>Caveat: {mfBacktest.caveat}</div>}
-              </div>)}
-            </div>)}
+            {/* Single-resident lookup (SCODE or name) — same endpoint the chatbot calls */}
+            <div style={{display:'flex',flexWrap:'wrap',alignItems:'flex-end',gap:14,padding:'16px 20px',borderRadius:14,border:'1px solid var(--border)',background:'var(--panel)',marginBottom:22}}>
+              <div style={{flex:1,minWidth:260}}>
+                <div style={lbl}>Look up one resident — SCODE or name</div>
+                <input value={tenantQuery} onChange={e=>setTenantQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')lookupTenant();}} placeholder="e.g.  t0012345   or   a resident name" style={{width:'100%',padding:'9px 12px',borderRadius:9,border:'1px solid var(--border)',background:'var(--panel2)',color:'var(--text)',fontFamily:'inherit',fontSize:13}}/>
+              </div>
+              <button onClick={lookupTenant} style={runBtn}>{tenantLoading?'Looking up…':'Get risk score'}</button>
+              {tenantRes && <TenantResult res={tenantRes}/>}
+            </div>
             {loading && (<div><div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:16,marginBottom:22}}>{[0,1,2,3].map(i=><Skel key={i} h={104}/>)}</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:16}}><Skel h={320}/><Skel h={320}/></div></div>)}
             {ready && mfData && (<div>
               {mfData.error && errBanner(mfData.error)}
               <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:16,marginBottom:20}}>{kpis.map((k,i)=><KPI key={i} {...k}/>)}</div>
+              {mfLabeled.length>0 && (<div style={{padding:'12px 16px',borderRadius:10,background:'var(--panel2)',border:'1px solid var(--border)',fontSize:12.5,lineHeight:1.55,marginBottom:20}}>
+                <span style={{fontWeight:700}}>Self-verify · realized outcomes as of {mfAsOf}:</span>{' '}
+                <span style={{fontFamily:"'JetBrains Mono',monospace",fontWeight:700}}>{mfChurned}</span> of {mfLabeled.length} scored residents actually moved out within 180 days ={' '}
+                <span style={{fontWeight:700,color:mfActualRate>=0.3?RISK.high:'var(--text)'}}>{(mfActualRate*100).toFixed(1)}% actual churn</span>
+                {mfMeanPred!=null && <span style={{color:'var(--muted)'}}> · model mean predicted {(mfMeanPred*100).toFixed(1)}%</span>}
+                {mfCensored && <span style={{color:'#f59e0b'}}> · note: this date is under 180 days ago, so some move-outs haven’t happened yet — the actual rate will rise as the window completes.</span>}
+              </div>)}
               {!mfData.error && (!mfData.results||mfData.results.length===0) && (<div style={{padding:'14px 16px',borderRadius:10,background:'var(--panel2)',border:'1px solid var(--border)',color:'var(--muted)',fontSize:13,marginBottom:16}}>No occupied units for this selection / as-of date.</div>)}
               <MFCharts/>
               <div style={{borderRadius:14,border:'1px solid var(--border)',background:'var(--panel)',overflow:'hidden'}}>
@@ -677,7 +779,7 @@ function App(){
                         <td style={{padding:'11px 16px',textAlign:'right',fontFamily:"'JetBrains Mono',monospace",fontWeight:600}}>{(r.churn_probability*100).toFixed(1)+'%'}</td>
                         <td style={{padding:'11px 16px'}}><span style={tierBadge(r.risk_tier)}>{r.risk_tier}</span></td>
                         <td style={{padding:'11px 16px'}}>{r.has_notice?<span style={{display:'inline-block',padding:'2px 9px',borderRadius:6,fontSize:11,fontWeight:600,color:'#f59e0b',background:'color-mix(in srgb,#f59e0b 14%,transparent)'}}>Filed</span>:<span style={{color:'var(--muted)'}}>—</span>}</td>
-                        <td style={{padding:'11px 16px',textAlign:'center'}}>{r.actual_churn?'Yes':'No'}</td>
+                        <td style={{padding:'11px 16px',textAlign:'center'}}>{mfKnownAC(r)?(Number(r.actual_churn)===1?<span style={{display:'inline-block',padding:'2px 9px',borderRadius:6,fontSize:11,fontWeight:600,color:'#f87171',background:'color-mix(in srgb,#f87171 14%,transparent)'}}>Moved out</span>:<span style={{color:'var(--muted)'}}>Stayed</span>):<span style={{color:'var(--muted)'}}>—</span>}</td>
                       </tr>))}
                     </tbody>
                   </table>
@@ -689,6 +791,7 @@ function App(){
 
           {/* ===== BK ===== */}
           {view==='bk' && (<div>
+            <SpaceDemand/>
             <BKScorecard/>
             <div style={{fontSize:12.5,fontWeight:600,color:'var(--muted)',margin:'4px 2px 10px'}}>Drill into one company — conversion-probability model (v0.3)</div>
             <div style={{display:'flex',flexWrap:'wrap',alignItems:'flex-end',gap:18,padding:'18px 20px',borderRadius:14,border:'1px solid var(--border)',background:'var(--panel)',marginBottom:22}}>

@@ -16,8 +16,9 @@ from app.auth import require_key
 from app.schemas import MultifamilyRequest, BrokerageRequest, MarketingRequest
 from core import registry, db
 from core.jsonify import clean
-from contracts.multifamily_churn import contract as mf, data as mf_data, schema as mf_schema, backtest as mf_backtest
+from contracts.multifamily_churn import contract as mf, data as mf_data, schema as mf_schema
 from contracts.signal_desk_brokerage import contract as bk, schema as bk_schema, scorecard as bk_scorecard
+from contracts.signal_desk_spacedemand import contract as spd
 from contracts.marketing import contract as mkt, schema as mkt_schema
 
 app = FastAPI(title="light_gbm_endpoint", version="1.0.0",
@@ -71,11 +72,18 @@ def contract_schema(contract: str, _=Depends(require_key)):
 
 @app.post("/predict/multifamily-churn")
 def predict_multifamily(body: MultifamilyRequest, _=Depends(require_key)):
+    if body.scode:
+        return clean(mf.score_one(body.scode, body.as_of))
+    if body.expires_from or body.expires_to:
+        if not (body.expires_from and body.expires_to):
+            raise HTTPException(400, "provide BOTH expires_from and expires_to")
+        return clean(mf.score_lease_window(body.expires_from, body.expires_to,
+                                           body.property_ids, body.as_of, body.limit))
     if body.property_ids:
         return clean(mf.score_buildings(body.property_ids, body.as_of, body.limit))
     if body.scodes:
         return clean(mf.score_scodes(body.scodes, body.as_of))
-    raise HTTPException(400, "provide scodes[] or property_ids[]")
+    raise HTTPException(400, "provide scode, scodes[], expires_from+expires_to, or property_ids[]")
 
 
 @app.post("/predict/signal-desk-brokerage")
@@ -94,12 +102,28 @@ def mf_buildings(_=Depends(require_key)):
     return clean(mf_data.list_properties())
 
 
-@app.post("/multifamily/backtest")
-def mf_backtest_ep(body: MultifamilyRequest, _=Depends(require_key)):
-    """Out-of-time validation: score the cohort as of a HISTORICAL as_of and compare
-    churn_probability vs realized ActualChurn (ROC-AUC / Brier / calibration). Use an
-    as_of >= ~180d ago; `limit` caps the sample for speed (default 250)."""
-    return clean(mf_backtest.backtest(body.property_ids, body.as_of, body.limit if body.limit else 250))
+@app.get("/multifamily/lease-window")
+def mf_lease_window(start: str, end: str, properties: str | None = None,
+                    as_of: str | None = None, limit: int | None = None, _=Depends(require_key)):
+    """Snapshot of residents whose lease EXPIRES within [start, end], scored by the churn
+    model. `properties` = optional comma-separated HPROPERTY ids (default all 4). `as_of`
+    defaults to min(today, start). Returns the same shape as /predict + window bounds."""
+    pids = [int(x) for x in properties.split(",") if x.strip()] if properties else None
+    return clean(mf.score_lease_window(start, end, pids, as_of, limit))
+
+
+@app.get("/multifamily/tenant/search")
+def mf_tenant_search(q: str, as_of: str | None = None, _=Depends(require_key)):
+    """Resolve a (partial) resident NAME -> current SCODE(s). Exactly one match embeds the
+    scored result + chatbot-ready `summary` under `tenant`; else returns `matches`."""
+    return clean(mf.lookup_tenant(q, as_of))
+
+
+@app.get("/multifamily/tenant/{scode}")
+def mf_tenant(scode: str, as_of: str | None = None, _=Depends(require_key)):
+    """Score ONE resident by SCODE -> churn_probability + stay_probability + risk_tier +
+    lease/notice + a natural-language `summary` a chatbot can read back to the user."""
+    return clean(mf.score_one(scode, as_of))
 
 
 @app.get("/brokerage/companies")
@@ -112,6 +136,14 @@ def bk_scorecard_ep(sort: str = "score", limit: int = 50, market: str | None = N
     """Company-centric, broker-free ranking: REA score + WinProb + EV + scoop momentum +
     lease proximity per company. sort=score|winprob|value|scoops|recency|lease."""
     return clean(bk_scorecard.company_scorecard(sort, limit, market))
+
+
+@app.get("/brokerage/space-demand-leads")
+def bk_space_demand(market: str | None = None, limit: int = 25, _=Depends(require_key)):
+    """PROTOTYPE space-demand lead-gen (self-contained ZoomInfo scoop panel): ranks in-market
+    companies by propensity to post a Facilities Relocation/Expansion signal (a space NEED) in
+    ~180d. Experimental; a prioritization list, NOT a conversion predictor. market=IA,NE."""
+    return clean(spd.space_demand_leads(market, limit))
 
 
 @app.get("/marketing/options")

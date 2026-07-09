@@ -26,7 +26,9 @@ def describe() -> dict:
         "name": NAME,
         "feature_mode": FEATURE_MODE,
         "variants": VARIANTS,
-        "input": {"version?": "str", "variant": "h60|h180", "as_of_date": "date", "scodes": "list[str]"},
+        "input": {"scode?": "str (single tenant)", "scodes?": "list[str]",
+                  "expires_from?/expires_to?": "date (lease-expiration window)",
+                  "property_ids?": "list[int]", "as_of?": "date", "limit?": "int"},
         "output": {"model_version": "str", "as_of": "date",
                    "results": [{"scode": "str", "churn_probability": "float", "risk_tier": "low|medium|high"}]},
     }

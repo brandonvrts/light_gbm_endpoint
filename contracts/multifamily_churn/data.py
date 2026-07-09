@@ -104,5 +104,79 @@ def active_rentable_scodes(property_ids: list[int], as_of: str | None = None) ->
     return df["SCODE"].tolist() if not df.empty else []
 
 
+def scodes_by_lease_window(start: str, end: str, property_ids: list[int] | None = None,
+                           as_of: str | None = None) -> list[str]:
+    """SCODEs of residents whose CURRENT lease expires (DTLEASETO) within [start, end].
+
+    This is the "lease-expiration window" cohort the renewal-validation workflow used to
+    build from a manual Yardi export (e.g. MayLeaseExpirations.xlsx -> Resident Code);
+    here it's a direct point-in-time query. Same active-resident eligibility as
+    active_rentable_scodes (occupied rentable unit, UNIT.EXCLUDE=0, the 4 properties, one
+    current lease per HUNIT) evaluated at `as_of`, PLUS DTLEASETO between start and end.
+    All dates are parsed (injection-safe); property_ids are ints.
+    """
+    s, e = _safe_asof(start), _safe_asof(end)
+    if e < s:
+        s, e = e, s
+    asof = _safe_asof(as_of)
+    ids = ",".join(str(int(p)) for p in property_ids) if property_ids else "62,72,82,26"
+    q = f"""WITH elig AS (
+        SELECT LTRIM(RTRIM(t.SCODE)) AS SCODE,
+               ROW_NUMBER() OVER (PARTITION BY t.HUNIT
+                                  ORDER BY t.DTLEASEFROM DESC, t.HMYPERSON DESC) AS rn
+        FROM [{db.DB_YARDI}].dbo.TENANT t
+        WHERE t.DTLEASEFROM IS NOT NULL AND t.DTLEASETO IS NOT NULL AND t.DTMOVEIN IS NOT NULL
+          AND t.DTLEASEFROM <= '{asof}' AND t.DTMOVEIN <= '{asof}'
+          AND (t.DTMOVEOUT IS NULL OR t.DTMOVEOUT > '{asof}')
+          AND t.HPROPERTY IN ({ids})
+          AND t.DTLEASETO >= '{s}' AND t.DTLEASETO <= '{e}'
+          AND t.HUNIT IN (SELECT HMY FROM [{db.DB_YARDI}].dbo.[UNIT] WHERE [EXCLUDE] = 0))
+    SELECT SCODE FROM elig WHERE rn = 1 AND SCODE IS NOT NULL"""
+    df = db.query(q)
+    return df["SCODE"].tolist() if not df.empty else []
+
+
+def search_tenants_by_name(q: str, property_ids: list[int] | None = None,
+                           as_of: str | None = None, limit: int = 25) -> list[dict]:
+    """Resolve a (partial) resident NAME -> current-resident SCODE(s).
+
+    For the chatbot path ("what's the probability John Doe stays") -> map the name to a
+    SCODE the model can score. Parameterized LIKE (injection-safe). One current resident
+    per rentable unit (dedup per HUNIT), active as of `as_of` (default today).
+    """
+    asof = _safe_asof(as_of)
+    term = (q or "").strip()
+    if not term:
+        return []
+    ids = ",".join(str(int(p)) for p in property_ids) if property_ids else "62,72,82,26"
+    like = f"%{term}%"
+    sql = f"""WITH elig AS (
+        SELECT LTRIM(RTRIM(t.SCODE)) AS SCODE,
+               LTRIM(RTRIM(ISNULL(t.SFIRSTNAME,'') + ' ' + ISNULL(t.SLASTNAME,''))) AS FullName,
+               t.SUNITCODE AS UnitCode, t.HPROPERTY AS PropertyId,
+               ROW_NUMBER() OVER (PARTITION BY t.HUNIT
+                                  ORDER BY t.DTLEASEFROM DESC, t.HMYPERSON DESC) AS rn
+        FROM [{db.DB_YARDI}].dbo.TENANT t
+        WHERE t.DTLEASEFROM IS NOT NULL AND t.DTLEASETO IS NOT NULL AND t.DTMOVEIN IS NOT NULL
+          AND t.DTLEASEFROM <= '{asof}' AND t.DTMOVEIN <= '{asof}'
+          AND (t.DTMOVEOUT IS NULL OR t.DTMOVEOUT > '{asof}')
+          AND t.HPROPERTY IN ({ids})
+          AND (ISNULL(t.SFIRSTNAME,'') + ' ' + ISNULL(t.SLASTNAME,'')) LIKE ?
+          AND t.HUNIT IN (SELECT HMY FROM [{db.DB_YARDI}].dbo.[UNIT] WHERE [EXCLUDE] = 0))
+    SELECT TOP ({int(limit)}) SCODE, FullName, UnitCode, PropertyId
+    FROM elig WHERE rn = 1 AND SCODE IS NOT NULL ORDER BY FullName"""
+    df = db.query(sql, (like,))
+    if df.empty:
+        return []
+    out = []
+    for _, r in df.iterrows():
+        pid = r.get("PropertyId")
+        out.append({"scode": str(r["SCODE"]).strip(),
+                    "full_name": r.get("FullName"),
+                    "unit": r.get("UnitCode"),
+                    "property": PROPERTIES.get(int(pid)) if pid is not None else None})
+    return out
+
+
 def list_properties() -> list[dict]:
     return [{"property_id": k, "name": v} for k, v in PROPERTIES.items()]
