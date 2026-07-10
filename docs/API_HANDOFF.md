@@ -58,8 +58,9 @@ curl -s -H "X-API-Key: rts-local-dev-key" -H "Content-Type: application/json" \
   "churn_probability": 0.2379,
   "stay_probability": 0.7621,
   "has_notice": false,
-  "days_to_lease_end": 0,
-  "summary": "Kent Nebel (unit 13-205, Winwood) has an estimated 24% move-out risk (low) ..."
+  "lease_to": "2026-08-17",
+  "days_to_lease_end": 38,
+  "summary": "Kent Nebel (unit 13-205, Winwood) has an estimated 24% move-out risk (low) as of 2026-07-10 -- about a 76% chance of staying. Their lease ends in 38 days (2026-08-17); no move-out notice is on file."
 }
 ```
 
@@ -99,7 +100,7 @@ curl -s -H "X-API-Key: rts-local-dev-key" -H "Content-Type: application/json" \
   "results": [
     {"scode": "t0014834", "full_name": "Kent Nebel", "unit": "13-205",
      "property": "Winwood", "churn_probability": 0.2379, "risk_tier": "low",
-     "has_notice": 0, "days_to_lease_end": 0}
+     "has_notice": 0, "lease_to": "2026-08-17", "days_to_lease_end": 38}
   ]
 }
 ```
@@ -242,8 +243,9 @@ cohort = requests.post(f"{BASE}/predict/marketing",
   lease-window or whole-building call runs the Yardi feature stored procedure and can take
   tens of seconds; results are cached (~TTL) so repeats are fast. The service pre-warms the
   all-buildings view on startup. Set generous client timeouts (60–300 s) for first calls.
-- **Missing lease dates:** `days_to_lease_end: 0` with no notice usually means the lease-end
-  date wasn't available from the feature source — the churn probability is still valid.
+- **Lease dates:** `lease_to` is the lease-expiration date; `days_to_lease_end` is counted
+  from the `as_of` date (negative = already expired). If `lease_to` is null the date wasn't
+  available from the feature source — the churn probability is still valid.
 - **PII:** responses include resident name/unit for internal convenience — treat downstream
   storage accordingly.
 - **Discovery endpoints:** `GET /contracts` (versions + manifests),

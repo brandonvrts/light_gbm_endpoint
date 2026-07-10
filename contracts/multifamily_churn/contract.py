@@ -66,7 +66,7 @@ def _display_calibrate(p) -> np.ndarray:
     return np.clip(p, _DISP_FLOOR, _DISP_CEIL)
 
 
-def _predict(df: pd.DataFrame, bundle: dict) -> list[dict]:
+def _predict(df: pd.DataFrame, bundle: dict, as_of: str | None = None) -> list[dict]:
     cal = bundle.get("calibration") or {}
     if bundle.get("bundle_format") == "standin":
         X = prep.prepare(df, bundle["encoders"], bundle["feature_medians"])
@@ -83,15 +83,28 @@ def _predict(df: pd.DataFrame, bundle: dict) -> list[dict]:
     p = _display_calibrate(p)   # -> displayed churn risk in [0.10, 0.75], rank order preserved
     lo, mid = _tiers(bundle)
     rows = df.reset_index(drop=True)
+    try:
+        asof_d = date.fromisoformat(str(as_of)[:10]) if as_of else date.today()
+    except ValueError:
+        asof_d = date.today()
     out = []
     for i in range(len(rows)):
         r = rows.iloc[i]
+        unit = r.get("UnitCode")
+        # The SP's DaysToLeaseEnd feature is anchored to the renewal DECISION date (0 by
+        # construction for many rows) -- display the real calendar distance from as_of.
+        lease_to = str(r.get("LeaseToDate") or "")[:10]
+        try:
+            d2e = (date.fromisoformat(lease_to) - asof_d).days
+        except ValueError:
+            lease_to, d2e = None, r.get("DaysToLeaseEnd")
         out.append({
             "scode": str(r.get("SCODE", "")).strip(),
             "full_name": r.get("FullName"),
-            "unit": r.get("UnitCode"),
+            "unit": str(unit).strip() if unit is not None else None,
             "property": r.get("PropertyName"),
-            "days_to_lease_end": r.get("DaysToLeaseEnd"),
+            "lease_to": lease_to,
+            "days_to_lease_end": d2e,
             "has_notice": r.get("HasNotice"),
             "actual_churn": r.get("ActualChurn"),
             "churn_probability": round(float(p[i]), 4),
@@ -110,7 +123,7 @@ def score_scodes(scodes: list[str], as_of: str | None = None) -> dict:
             "model_source": source, "as_of": as_of,
             "tier_thresholds": {"low_max": lo, "medium_max": mid},  # single source of truth
             "count": 0 if df.empty else int(len(df)),
-            "results": [] if df.empty else _predict(df, b)}
+            "results": [] if df.empty else _predict(df, b, as_of)}
 
 
 def score_buildings(property_ids: list[int], as_of: str | None = None,
@@ -207,9 +220,11 @@ def _tenant_payload(r: dict, res: dict) -> dict:
     unit, prop, tier = r.get("unit"), r.get("property"), r.get("risk_tier")
     d2e = r.get("days_to_lease_end")
     notice = bool(r.get("has_notice"))
+    lt = r.get("lease_to")
+    on = f" ({lt})" if lt else ""
     if isinstance(d2e, (int, float)):
-        lease_txt = (f"their lease ends in {int(d2e)} days" if d2e >= 0
-                     else f"their lease ended {abs(int(d2e))} days ago")
+        lease_txt = (f"their lease ends in {int(d2e)} days{on}" if d2e >= 0
+                     else f"their lease ended {abs(int(d2e))} days ago{on}")
     else:
         lease_txt = "their lease-end date is unavailable"
     notice_txt = "a move-out notice is on file" if notice else "no move-out notice is on file"
@@ -221,7 +236,7 @@ def _tenant_payload(r: dict, res: dict) -> dict:
             "found": True, "scode": r.get("scode"), "full_name": name,
             "unit": unit, "property": prop, "risk_tier": tier,
             "churn_probability": r.get("churn_probability"), "stay_probability": stay,
-            "has_notice": notice, "days_to_lease_end": d2e,
+            "has_notice": notice, "lease_to": r.get("lease_to"), "days_to_lease_end": d2e,
             "actual_churn": r.get("actual_churn"),
             "tier_thresholds": res.get("tier_thresholds"), "summary": summary}
 
