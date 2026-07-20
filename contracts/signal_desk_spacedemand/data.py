@@ -151,6 +151,35 @@ def _metrics(bundle) -> dict:
             "positive_company_months": m.get("oof_pos")}
 
 
+_UNIVERSE_CACHE: dict = {}
+
+
+def score_universe(as_of: str | None = None):
+    """Score EVERY scooped company (all states) as of a date with the frozen bundle.
+
+    Returns (df, bundle): df has one row per company with the 19 features plus
+    `propensity`. This is the single scoring pass shared by the brokerage lead list
+    and the marketing cohort views — cached per as-of so grouping/filtering callers
+    never re-score. Callers must treat the frame as read-only (copy before mutating).
+    """
+    asof = (as_of or date.today().isoformat())[:10]
+    hit = _UNIVERSE_CACHE.get(asof)
+    if hit and time.time() - hit[0] < _TTL:
+        return hit[1]
+    with _LOCK:
+        hit = _UNIVERSE_CACHE.get(asof)
+        if hit and time.time() - hit[0] < _TTL:
+            return hit[1]
+        b = registry.load("signal_desk_spacedemand")
+        s, c = _load()
+        df = _features_asof(s, c, asof)
+        if not df.empty:
+            raw = b["model"].predict_proba(df[FEATS])[:, 1]
+            platt = b.get("platt")
+            df["propensity"] = platt.predict_proba(raw.reshape(-1, 1))[:, 1] if platt is not None else raw
+        _UNIVERSE_CACHE[asof] = (time.time(), (df, b))
+        return df, b
+
 
 def leads(market: str | None = None, limit: int = 25, as_of: str | None = None) -> dict:
     asof = (as_of or date.today().isoformat())[:10]
@@ -162,47 +191,38 @@ def leads(market: str | None = None, limit: int = 25, as_of: str | None = None) 
     hit = _CACHE.get(key)
     if hit and time.time() - hit[0] < _TTL:
         return hit[1]
-    with _LOCK:
-        hit = _CACHE.get(key)
-        if hit and time.time() - hit[0] < _TTL:
-            return hit[1]
-        b = registry.load("signal_desk_spacedemand")
-        s, c = _load()
-        df = _features_asof(s, c, asof)
-        meta = {"model_version": b.get("version"), "status": "prototype", "as_of": asof,
-                "label": b.get("label"), "market": mkts, "metrics": _metrics(b),
-                "note": ("PROTOTYPE lead-gen: ranks in-market companies by propensity to post a "
-                         "relocation/expansion signal (space NEED) in ~180d. NOT a conversion "
-                         "predictor and NOT broker-facing truth — a research prioritization list.")}
-        if df.empty:
-            out = {**meta, "count": 0, "leads": []}
-            _CACHE[key] = (time.time(), out); return out
-        raw = b["model"].predict_proba(df[FEATS])[:, 1]
-        platt = b.get("platt")
-        df["propensity"] = platt.predict_proba(raw.reshape(-1, 1))[:, 1] if platt is not None else raw
-        in_mkt = df[df["State"].isin(want)].sort_values("propensity", ascending=False)
-        pipe = _pipeline_company_ids()
-        out_leads = []
-        for i, r in enumerate(in_mkt.head(int(limit)).to_dict("records"), 1):
-            out_leads.append({
-                "rank": i, "company_id": r["CompanyID"], "company": r["Name"], "state": r["State"],
-                "propensity": round(float(r["propensity"]), 4),
-                "emp_band": _emp_band(r.get("emp")),
-                "in_pipeline": int(r["CompanyID"]) in pipe,   # already an active RTS prospect
-                "signals": {"hiring_365d": int(round(np.expm1(r["hiring_365d"]))),
-                            "fundmna_365d": int(r["fundmna_365d"]),
-                            "execmove_365d": int(r["execmove_365d"]),
-                            "project_365d": int(round(np.expm1(r["project_365d"]))),
-                            "had_prior_reloc": bool(r["had_prior_reloc"] >= 1),
-                            "days_since_scoop": int(r["days_since_scoop"])},
-                "why": _why(r)})
-        band_mix: dict = {}
-        for r in in_mkt.head(int(limit)).to_dict("records"):
-            b_ = _emp_band(r.get("emp")); band_mix[b_] = band_mix.get(b_, 0) + 1
-        out = {**meta, "scored_in_market": int(len(in_mkt)), "count": len(out_leads),
-               "size_band_mix": band_mix,
-               "new_vs_pipeline": {"new": sum(1 for x in out_leads if not x["in_pipeline"]),
-                                   "already_in_pipeline": sum(1 for x in out_leads if x["in_pipeline"])},
-               "leads": out_leads}
-        _CACHE[key] = (time.time(), out)
-        return out
+    df, b = score_universe(asof)
+    meta = {"model_version": b.get("version"), "status": "prototype", "as_of": asof,
+            "label": b.get("label"), "market": mkts, "metrics": _metrics(b),
+            "note": ("PROTOTYPE lead-gen: ranks in-market companies by propensity to post a "
+                     "relocation/expansion signal (space NEED) in ~180d. NOT a conversion "
+                     "predictor and NOT broker-facing truth — a research prioritization list.")}
+    if df.empty:
+        out = {**meta, "count": 0, "leads": []}
+        _CACHE[key] = (time.time(), out); return out
+    in_mkt = df[df["State"].isin(want)].sort_values("propensity", ascending=False)
+    pipe = _pipeline_company_ids()
+    out_leads = []
+    for i, r in enumerate(in_mkt.head(int(limit)).to_dict("records"), 1):
+        out_leads.append({
+            "rank": i, "company_id": r["CompanyID"], "company": r["Name"], "state": r["State"],
+            "propensity": round(float(r["propensity"]), 4),
+            "emp_band": _emp_band(r.get("emp")),
+            "in_pipeline": int(r["CompanyID"]) in pipe,   # already an active RTS prospect
+            "signals": {"hiring_365d": int(round(np.expm1(r["hiring_365d"]))),
+                        "fundmna_365d": int(r["fundmna_365d"]),
+                        "execmove_365d": int(r["execmove_365d"]),
+                        "project_365d": int(round(np.expm1(r["project_365d"]))),
+                        "had_prior_reloc": bool(r["had_prior_reloc"] >= 1),
+                        "days_since_scoop": int(r["days_since_scoop"])},
+            "why": _why(r)})
+    band_mix: dict = {}
+    for r in in_mkt.head(int(limit)).to_dict("records"):
+        b_ = _emp_band(r.get("emp")); band_mix[b_] = band_mix.get(b_, 0) + 1
+    out = {**meta, "scored_in_market": int(len(in_mkt)), "count": len(out_leads),
+           "size_band_mix": band_mix,
+           "new_vs_pipeline": {"new": sum(1 for x in out_leads if not x["in_pipeline"]),
+                               "already_in_pipeline": sum(1 for x in out_leads if x["in_pipeline"])},
+           "leads": out_leads}
+    _CACHE[key] = (time.time(), out)
+    return out

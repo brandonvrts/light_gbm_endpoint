@@ -22,9 +22,12 @@ def record(company_id: int | None = None, hmy: int | None = None, action: str = 
            staff: str | None = None, note: str | None = None, market: str | None = None,
            rea_score: float | None = None, win_prob: float | None = None,
            conversion_probability: float | None = None,
-           opportunity_tier: str | None = None, source: str | None = None) -> dict:
+           opportunity_tier: str | None = None, source: str | None = None,
+           propensity: float | None = None, cohort_key: str | None = None) -> dict:
     """Append one lead-outcome event. Identify by company_id (ZI) and/or hMy (Yardi).
-    `source` = which surface produced the lead (scorecard | space-demand | conversion)."""
+    `source` = which surface produced the lead (scorecard | space-demand | conversion |
+    marketing). `propensity`/`cohort_key` snapshot the space-demand score and marketing
+    cohort the lead was worked from (marketing-attributed outreach)."""
     if company_id is None and hmy is None:
         raise ValueError("company_id or hmy required")
     act = (action or "note").strip().lower()
@@ -37,7 +40,8 @@ def record(company_id: int | None = None, hmy: int | None = None, action: str = 
            "note": (note or "").strip() or None, "market": market,
            "source": source, "opportunity_tier": opportunity_tier,
            "rea_score": rea_score, "win_prob": win_prob,
-           "conversion_probability": conversion_probability}
+           "conversion_probability": conversion_probability,
+           "propensity": propensity, "cohort_key": cohort_key}
     _STORE.parent.mkdir(parents=True, exist_ok=True)
     with _STORE.open("a") as fh:
         fh.write(json.dumps(rec) + "\n")

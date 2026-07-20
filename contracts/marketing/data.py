@@ -87,12 +87,33 @@ def scoop_momentum(window_days: int = 90) -> list[dict]:
             for r in df.to_dict("records")]
 
 
+def _space_demand_by_key() -> dict:
+    """Per-cohort 'needs space now' stats from the space-demand ML rollup, keyed by the
+    canonical CohortKey (Phase 2 fusion). Best-effort: targeting must keep working from
+    the catalog alone if scoring is unavailable."""
+    try:
+        from contracts.marketing import space_demand as sdm
+        roll = sdm.cohort_rollup(market=None, min_scored=1)
+        by_key = {}
+        for c in roll.get("cohorts", []) + roll.get("verticals", []):
+            by_key[c["cohort_key"]] = {
+                k: c[k] for k in ("n_scored", "hot_n", "hot_new_n",
+                                  "expected_events_180d", "avg_propensity")}
+        return {"by_key": by_key, "model_source": roll.get("model_source"),
+                "hot_definition": roll.get("hot_definition")}
+    except Exception:  # noqa: BLE001
+        return {"by_key": {}, "model_source": None, "hot_definition": None}
+
+
 def cohort_targeting() -> dict:
-    """Rank cohorts the marketing team should work, by EXPECTED OPPORTUNITY =
-    addressable prospects x historical win-rate, enriched with a recent scoop-momentum
-    signal per industry. Grounded in mkt.CohortCatalog + rea.DealPattern (real won/deals)
-    + zi.Scoop (2022-2026 backfill); no hallucinated $ value (DealPattern median rent is
-    unpopulated, so $ EV is intentionally omitted)."""
+    """Rank cohorts the marketing team should work. Primary rank: EXPECTED OPPORTUNITY =
+    hot NEW space-need leads now (space-demand ML rollup, not already in pipeline) x
+    historical win-rate; cohorts without scoop coverage fall back to expected_winnable =
+    addressable x win-rate (no data != no demand). Enriched with per-industry scoop
+    momentum. Grounded in mkt.CohortCatalog + rea.DealPattern (real won/deals) + the
+    spacedemand bundle + zi.Scoop (2022-2026 backfill); no hallucinated $ value
+    (DealPattern median rent is unpopulated, so $ EV is intentionally omitted)."""
+    from contracts.marketing import cohort as cv
     df = db.query(
         f"SELECT Vertical, SizeBand, DealCount, WonCount, LostCount, WinRate, ProspectsTagged, "
         f"MedianDaysInStage FROM [{db.DB_MAIN}].mkt.CohortCatalog "
@@ -103,15 +124,27 @@ def cohort_targeting() -> dict:
     def _f(x):
         return float(x) if pd.notna(x) else 0.0
 
+    sd = _space_demand_by_key()
+
+    def _fuse(entry: dict, key: str, wr: float) -> dict:
+        stats = sd["by_key"].get(key)
+        entry["cohort_key"] = key
+        entry["needs_space_now"] = stats
+        entry["expected_opportunity"] = (
+            round(stats["hot_new_n"] * wr, 2) if stats else 0.0)
+        return entry
+
     cohorts = []
     for r in (df.to_dict("records") if not df.empty else []):
         addr, wr, mdis = _i(r.get("ProspectsTagged")), _f(r.get("WinRate")), r.get("MedianDaysInStage")
-        cohorts.append({"vertical": r["Vertical"], "size_band": r["SizeBand"],
-                        "addressable": addr, "win_rate": round(wr, 3),
-                        "deal_count": _i(r.get("DealCount")), "won": _i(r.get("WonCount")),
-                        "expected_winnable": round(addr * wr, 1),
-                        "median_days_in_stage": (int(mdis) if pd.notna(mdis) else None)})
-    cohorts.sort(key=lambda x: x["expected_winnable"], reverse=True)
+        cohorts.append(_fuse(
+            {"vertical": r["Vertical"], "size_band": r["SizeBand"],
+             "addressable": addr, "win_rate": round(wr, 3),
+             "deal_count": _i(r.get("DealCount")), "won": _i(r.get("WonCount")),
+             "expected_winnable": round(addr * wr, 1),
+             "median_days_in_stage": (int(mdis) if pd.notna(mdis) else None)},
+            cv.cohort_key(r["SizeBand"], r["Vertical"]), wr))
+    cohorts.sort(key=lambda x: (x["expected_opportunity"], x["expected_winnable"]), reverse=True)
 
     vr = db.query(
         f"SELECT Vertical, SUM(DealCount) deals, SUM(WonCount) won, SUM(ProspectsTagged) addressable, "
@@ -121,20 +154,29 @@ def cohort_targeting() -> dict:
     verticals = []
     for r in (vr.to_dict("records") if not vr.empty else []):
         addr, wr = _i(r.get("addressable")), _f(r.get("win_rate"))
-        verticals.append({"vertical": r["Vertical"], "addressable": addr, "win_rate": round(wr, 3),
-                          "deals": _i(r.get("deals")), "won": _i(r.get("won")),
-                          "expected_winnable": round(addr * wr, 1)})
-    verticals.sort(key=lambda x: x["expected_winnable"], reverse=True)
+        verticals.append(_fuse(
+            {"vertical": r["Vertical"], "addressable": addr, "win_rate": round(wr, 3),
+             "deals": _i(r.get("deals")), "won": _i(r.get("won")),
+             "expected_winnable": round(addr * wr, 1)},
+            cv.cohort_key(None, r["Vertical"]), wr))
+    verticals.sort(key=lambda x: (x["expected_opportunity"], x["expected_winnable"]), reverse=True)
     try:
         momentum = scoop_momentum(90)
     except Exception:
         momentum = []
-    return {"objective": "addressable x historical win-rate + scoop momentum",
-            "source": "mkt.CohortCatalog + rea.ProspectCompanyLink + zi.Scoop (2022-2026)",
+    return {"objective": "hot new space-need leads x historical win-rate "
+                         "(fallback: addressable x win-rate) + scoop momentum",
+            "source": "mkt.CohortCatalog + spacedemand bundle + rea.ProspectCompanyLink "
+                      "+ zi.Scoop (2022-2026)",
+            "space_demand_model": sd["model_source"],
+            "hot_definition": sd["hot_definition"],
             "cohorts": cohorts, "verticals": verticals, "scoop_momentum_90d": momentum,
-            "note": "expected_winnable = addressable x historical win-rate (rank to prioritize outreach); "
-                    "scoop_momentum_90d = recent ZoomInfo scoop volume per industry (heating-up signal). "
-                    "$ EV omitted: rea.DealPattern median rent is not populated."}
+            "note": "expected_opportunity = hot NEW space-need leads (ML, top-decile propensity, "
+                    "not in pipeline) x historical win-rate — the 'campaign at these now' rank. "
+                    "needs_space_now = null means no scoop coverage (no data, NOT no demand); such "
+                    "cohorts rank by expected_winnable = addressable x historical win-rate. "
+                    "scoop_momentum_90d = recent ZoomInfo scoop volume per industry (heating-up "
+                    "signal). $ EV omitted: rea.DealPattern median rent is not populated."}
 
 
 def _records(df: pd.DataFrame) -> list[dict]:

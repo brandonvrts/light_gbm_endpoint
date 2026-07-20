@@ -11,6 +11,8 @@ Endpoints:
   GET  /multifamily/churn-trend             month-over-month churn summary series
   POST/GET /multifamily/outreach            log/list retention outreach (uplift tracking)
   GET  /multifamily/calibration-drift       logged predicted-vs-realized per settled month
+  GET  /marketing/space-demand              per-cohort "who needs space" rollup (spacedemand bundle)
+  GET  /marketing/space-demand/leads        ranked space-need leads inside one cohort
   GET  /multifamily/buildings | /brokerage/companies | /marketing/options   (UI helpers)
 """
 from __future__ import annotations
@@ -249,6 +251,8 @@ class LeadEvent(BaseModel):
     conversion_probability: float | None = None
     opportunity_tier: str | None = None
     source: str | None = None
+    propensity: float | None = None      # space-demand score shown at contact time
+    cohort_key: str | None = None        # marketing cohort the lead was worked from
 
 
 @app.post("/brokerage/leads")
@@ -288,6 +292,27 @@ def mkt_options(_=Depends(require_key)):
 @app.get("/marketing/targeting")
 def mkt_targeting(_=Depends(require_key)):
     return clean(mkt.targeting())
+
+
+@app.get("/marketing/space-demand")
+def mkt_space_demand(market: str | None = None, min_scored: int = 3, _=Depends(require_key)):
+    """Per-cohort 'who needs space' rollup over the PROTOTYPE space-demand model (the
+    same frozen bundle brokerage serves): expected space-need events in ~180d, hot-lead
+    counts (top decile), and top previews per canonical marketing cohort
+    (size band x vertical). market=IA,NE. Missing cohorts = no scoop data, not no demand."""
+    return clean(mkt.space_demand(market, min_scored))
+
+
+@app.get("/marketing/space-demand/leads")
+def mkt_space_demand_leads(cohort: str, market: str | None = None, limit: int = 25,
+                           _=Depends(require_key)):
+    """Ranked space-need leads inside one marketing cohort. `cohort` accepts the canonical
+    key ('size=mid|vertical=healthcare'), a single dim ('vertical=healthcare'), or a bare
+    token ('healthcare'). Same propensities as /brokerage/space-demand-leads."""
+    try:
+        return clean(mkt.space_demand_leads(cohort, market, limit))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/models")
