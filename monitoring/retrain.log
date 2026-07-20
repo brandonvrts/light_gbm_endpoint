@@ -1,1 +1,7 @@
 {"ts": "2026-07-07T14:10:13", "contract": "signal_desk_brokerage", "incumbent": "v0.3-corrected-logistic", "incumbent_metric": 0.1082, "candidate": "v0.3-cand-20260707_140956", "metric_name": "rolling-origin PR-AUC", "candidate_metric": 0.1082, "decision": "PROMOTE", "reason": "0.1082 >= 0.1082-0.01 (no regression)", "dry_run": false, "default_now": "v0.3-cand-20260707_140956"}
+2026-07-14T11:50:46-05:00 PROMOTE multifamily_churn v4-recal -> v5-person-tenure (person-tenure PIT anchors, sigmoid+intercept cal, wf-AUC 0.843, expiring-cohort 23.15% vs realized 23.02%)
+2026-07-15T09:51:02-05:00 PROMOTE multifamily_churn v5-person-tenure -> v6-roadmap-h60 (transfer-aware labels, spline cal, capacity tiers, OOT holdout, PIT serving, coverage LEFT JOIN, memo upgrade; wf-AUC 0.905, OOT 20.5% vs 18.3% realized)
+{"ts": "2026-07-07T14:12:09", "contract": "signal_desk_brokerage", "action": "manual_revert", "from": "v0.3-cand-20260707_140956", "to": "v0.3-corrected-logistic", "reason": "candidate was a byte-identical deterministic retrain; reverted to canonical version name (backfilled audit entry 2026-07-16)"}
+{"ts": "2026-07-16T00:00:00", "contract": "signal_desk_brokerage", "action": "promote", "to": "v0.5-split-honest", "reason": "roadmap Phase 1: honest nested-grouped-CV two-head model (pipeline_momentum + cold_fit); hygienic censored label; distribution-based opportunity tiers"}
+{"ts": "2026-07-16T00:00:01", "contract": "signal_desk_dealwin", "action": "tombstone"}
+{"ts": "2026-07-16T00:00:02", "contract": "signal_desk_recency", "action": "tombstone"}

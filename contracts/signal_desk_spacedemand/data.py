@@ -61,6 +61,7 @@ def _features_asof(s, c, asof):
         rows.append({
             "CompanyID": int(cid), "Name": getattr(fm, "Name", None) if fm else None,
             "State": getattr(fm, "State", None) if fm else None,
+            "emp": float(emp) if (emp and emp > 0) else None,
             "cnt_90d": float(np.log1p(w90.sum())), "cnt_180d": float(np.log1p(w180.sum())),
             "cnt_365d": float(np.log1p(w365.sum())),
             "hiring_365d": float(np.log1p(np.isin(ptyp[w365], list(T_HIRING)).sum())),
@@ -80,6 +81,48 @@ def _features_asof(s, c, asof):
             "company_age": float(pd.Timestamp(asof).year - fy) if (fy and fy > 1800) else np.nan,
         })
     return pd.DataFrame(rows)
+
+
+def _emp_band(emp) -> str:
+    """Size band (Phase 3.1): the model tilts toward large employers, so surface the band
+    and let callers segment instead of a large-company-dominated single list."""
+    if emp is None:
+        return "unknown"
+    if emp < 50:
+        return "micro (<50)"
+    if emp < 250:
+        return "small (50-250)"
+    if emp < 1000:
+        return "mid (250-1000)"
+    return "large (1000+)"
+
+
+_PIPE_CACHE: dict = {}
+
+
+def _pipeline_company_ids() -> set:
+    """CompanyIDs already an ACTIVE RTS prospect (open, unresolved deal) via
+    ProspectCompanyLink -> vw_Deal (Phase 3.1 dedup: don't hand brokers leads already in
+    their pipeline). Cached 1h; failure -> empty (dedup is best-effort)."""
+    hit = _PIPE_CACHE.get("s")
+    if hit and time.time() - hit[0] < _TTL:
+        return hit[1]
+    out = set()
+    # vw_Deal has no StageResolved column (that's on rea.YardiDeal, which lacks
+    # commProspectId); "open" = an active pipeline stage on vw_Deal, excluding the resolved
+    # stages (Executed/Cancelled/Dead Deal) and the NaN/numeric-junk stageName values.
+    open_stages = "'Proposal','Tour','Negotiation','Lead','Qualified Lead','Lease Negotiation'"
+    try:
+        df = db.query(
+            f"SELECT DISTINCT l.CompanyID FROM [{db.DB_MAIN}].rea.ProspectCompanyLink l "
+            f"JOIN [{db.DB_MAIN}].rea.vw_Deal d ON d.commProspectId = l.hMy "
+            f"WHERE l.CompanyID IS NOT NULL AND d.deadDealReason IS NULL "
+            f"AND d.stageName IN ({open_stages})")
+        out = {int(x) for x in df["CompanyID"].tolist()} if not df.empty else set()
+    except Exception:
+        out = set()
+    _PIPE_CACHE["s"] = (time.time(), out)
+    return out
 
 
 def _why(r) -> str:
@@ -106,6 +149,7 @@ def _metrics(bundle) -> dict:
             "pr_auc_vs_base_x": round((m.get("pr_auc") or 0) / base, 1) if base else None,
             "pr_auc_lift_ci95": m.get("pr_auc_lift_ci95"),
             "positive_company_months": m.get("oof_pos")}
+
 
 
 def leads(market: str | None = None, limit: int = 25, as_of: str | None = None) -> dict:
@@ -136,12 +180,15 @@ def leads(market: str | None = None, limit: int = 25, as_of: str | None = None) 
         raw = b["model"].predict_proba(df[FEATS])[:, 1]
         platt = b.get("platt")
         df["propensity"] = platt.predict_proba(raw.reshape(-1, 1))[:, 1] if platt is not None else raw
-        m = df[df["State"].isin(want)].sort_values("propensity", ascending=False).head(int(limit))
+        in_mkt = df[df["State"].isin(want)].sort_values("propensity", ascending=False)
+        pipe = _pipeline_company_ids()
         out_leads = []
-        for i, r in enumerate(m.to_dict("records"), 1):
+        for i, r in enumerate(in_mkt.head(int(limit)).to_dict("records"), 1):
             out_leads.append({
                 "rank": i, "company_id": r["CompanyID"], "company": r["Name"], "state": r["State"],
                 "propensity": round(float(r["propensity"]), 4),
+                "emp_band": _emp_band(r.get("emp")),
+                "in_pipeline": int(r["CompanyID"]) in pipe,   # already an active RTS prospect
                 "signals": {"hiring_365d": int(round(np.expm1(r["hiring_365d"]))),
                             "fundmna_365d": int(r["fundmna_365d"]),
                             "execmove_365d": int(r["execmove_365d"]),
@@ -149,7 +196,13 @@ def leads(market: str | None = None, limit: int = 25, as_of: str | None = None) 
                             "had_prior_reloc": bool(r["had_prior_reloc"] >= 1),
                             "days_since_scoop": int(r["days_since_scoop"])},
                 "why": _why(r)})
-        out = {**meta, "scored_in_market": int(len(df[df["State"].isin(want)])), "count": len(out_leads),
+        band_mix: dict = {}
+        for r in in_mkt.head(int(limit)).to_dict("records"):
+            b_ = _emp_band(r.get("emp")); band_mix[b_] = band_mix.get(b_, 0) + 1
+        out = {**meta, "scored_in_market": int(len(in_mkt)), "count": len(out_leads),
+               "size_band_mix": band_mix,
+               "new_vs_pipeline": {"new": sum(1 for x in out_leads if not x["in_pipeline"]),
+                                   "already_in_pipeline": sum(1 for x in out_leads if x["in_pipeline"])},
                "leads": out_leads}
         _CACHE[key] = (time.time(), out)
         return out

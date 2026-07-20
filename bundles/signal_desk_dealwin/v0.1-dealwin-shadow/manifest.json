@@ -122,5 +122,8 @@
     "graduation_auc_gate_2of2_larger_splits": false
   },
   "status": "shadow",
-  "note": "Deal re-ranker ported from the Signal Desk shadow win-model + point-in-time scoop features (2022-2026 backfill). SHADOW until it clears the AUC-lift graduation gate vs live P(win) with leadBroker ablation + temporal-split integrity."
+  "note": "Deal re-ranker ported from the Signal Desk shadow win-model + point-in-time scoop features (2022-2026 backfill). SHADOW until it clears the AUC-lift graduation gate vs live P(win) with leadBroker ablation + temporal-split integrity.",
+  "tombstoned": true,
+  "tombstone_reason": "Deal-grain win prediction has no leakage-free signal at current volume (v0.1 edge was entirely leadBroker era-proxy; v0.2 leak-free AUC~0.50 below cohort baseline). Retired 2026-07-16; revisit if resolved-deal volume grows materially.",
+  "tombstoned_at": "2026-07-16"
 }

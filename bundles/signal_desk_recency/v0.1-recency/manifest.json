@@ -39,5 +39,8 @@
     ],
     "test_pr_auc": 0.069
   },
-  "note": "Near-term deal-activity propensity from recency signal (broker-free). Serve from current rea.CompanyScoreSnapshot scoop fields + zi.Company firmographics."
+  "note": "Near-term deal-activity propensity from recency signal (broker-free). Serve from current rea.CompanyScoreSnapshot scoop fields + zi.Company firmographics.",
+  "tombstoned": true,
+  "tombstone_reason": "Deal-open-recency target is endogenous to RTS's own outreach; test AUC 0.505 CI [0.464,0.545] (random), served uncalibrated. Retired 2026-07-16.",
+  "tombstoned_at": "2026-07-16"
 }

@@ -9,15 +9,16 @@ NAME = "multifamily-churn"
 FEATURE_MODE = "identifier-in"
 VARIANTS = ["h60", "h180"]
 
-# Yardi data dependency (identifier-in)
-INFERENCE_SP = "dbo.sp_GetTenantFeaturesByScode"   # @ScodeList, @AsOfDate, @WindowMonths=18
-PROPERTY_FILTER = (62, 72, 82, 26)  # CCV / Sierra Pointe / Residences 62W / Winwood
+# Yardi data dependency (identifier-in). v6+ serves from data.pit_features_sql (set-based,
+# as-of-anchored point-in-time features); the legacy per-resident SP is retained only for
+# pre-v5 bundles.
+INFERENCE_SP = "data.pit_features_sql"             # as-of point-in-time; legacy: dbo.sp_GetTenantFeaturesByScode
+PROPERTY_FILTER = (62, 72, 82, 26, 473)  # CCV / Sierra Pointe / Residences 62W / Winwood / CCV Townhomes
 
-# Bundle invariants the smoke test asserts against the frozen artifact:
-EXPECTED_FEATURE_COUNT = 45
-# Pin these from the actually-frozen bundle's manifest (see docs/ARCHITECTURE.md §4):
-#   h180 deployment bundle = LightGBM + isotonic + 32.3% anchor, clip [0.01, 0.99]
-#   h60  = ranker (use for ranking only)
+# Bundle invariants the smoke test asserts. v6 adds HasLeaseRecord -> 46 features; earlier
+# bundles carry 45 and read their own feature_columns, so the golden test checks the
+# DEPLOYED bundle against its own manifest, not this constant.
+EXPECTED_FEATURE_COUNT = 46
 
 
 def describe() -> dict:

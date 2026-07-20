@@ -131,5 +131,8 @@
       "lift_ci_excludes_0_larger_folds": false
     }
   },
-  "note": "Leakage-free rebuild (no leadBroker/Econ*); group-disjoint by TenantId; PIT scoops; Yardi-vs-ZI ablation. SHADOW pending graduation."
+  "note": "Leakage-free rebuild (no leadBroker/Econ*); group-disjoint by TenantId; PIT scoops; Yardi-vs-ZI ablation. SHADOW pending graduation.",
+  "tombstoned": true,
+  "tombstone_reason": "Deal-grain win prediction has no leakage-free signal at current volume (v0.1 edge was entirely leadBroker era-proxy; v0.2 leak-free AUC~0.50 below cohort baseline). Retired 2026-07-16; revisit if resolved-deal volume grows materially.",
+  "tombstoned_at": "2026-07-16"
 }

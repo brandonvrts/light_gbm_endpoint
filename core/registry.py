@@ -29,12 +29,37 @@ def list_contracts() -> dict[str, list[str]]:
     return out
 
 
+def _blocked(contract: str, version: str) -> bool:
+    """A version must never be SERVED if its manifest marks it shadow or tombstoned
+    (failed/retired models). Guards the implicit versions[-1] fallback from silently
+    serving e.g. a failed dealwin shadow bundle."""
+    mp = BUNDLES / contract / version / "manifest.json"
+    if not mp.exists():
+        return False
+    try:
+        m = json.loads(mp.read_text())
+    except Exception:
+        return False
+    if m.get("tombstoned"):
+        return True
+    status = str(m.get("status") or "").lower()
+    return status.startswith("shadow") or status.startswith("tombstone")
+
+
 def default_version(contract: str) -> str | None:
     ptr = BUNDLES / contract / "default.txt"
     if ptr.exists():
         v = ptr.read_text().strip()
-        if (BUNDLES / contract / v / "bundle.joblib").exists():
+        # honor an explicit pin unless the target is tombstoned (retired for good)
+        if (BUNDLES / contract / v / "bundle.joblib").exists() and not _blocked(contract, v):
             return v
+    versions = [v for v in list_contracts().get(contract, []) if not _blocked(contract, v)]
+    return versions[-1] if versions else None
+
+
+def latest_version(contract: str) -> str | None:
+    """Newest version IGNORING serving blocks — for INTROSPECTION only (model cards,
+    audits). Never use this to serve predictions; use default_version for that."""
     versions = list_contracts().get(contract, [])
     return versions[-1] if versions else None
 

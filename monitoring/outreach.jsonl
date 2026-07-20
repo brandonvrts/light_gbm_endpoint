@@ -1,0 +1,2 @@
+{"ts": "2026-07-15T09:52:54", "scode": "t0003779", "action": "called", "staff": "BV", "note": "renewal check-in", "month": "2026-09", "churn_probability": 0.04, "risk_tier": "low"}
+{"ts": "2026-07-15T09:56:46", "scode": "t0009999", "action": "note", "staff": "VERIFY", "note": "verify test", "month": "2026-09", "churn_probability": 0.5, "risk_tier": "medium"}

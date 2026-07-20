@@ -146,8 +146,10 @@ def _mk_card() -> dict:
 
 
 def _dealwin_card() -> dict | None:
+    # introspection only: dealwin is tombstoned (never served) but we still surface the
+    # finding on the model cards, so load the newest version explicitly, not via serving.
     try:
-        b = registry.load("signal_desk_dealwin")
+        b = registry.load("signal_desk_dealwin", registry.latest_version("signal_desk_dealwin"))
     except Exception:
         return None
     if b.get("bundle_format") == "dealwin-lgbm-v2":

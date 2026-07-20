@@ -36,5 +36,6 @@
     }
   },
   "feature_count": 19,
-  "note": "Prototype relocation/expansion propensity lead-gen model on the self-contained zi.Scoop panel. NOT wired to API/UI/default.txt \u2014 validation + leads demo only."
+  "note": "PROTOTYPE space-demand lead-gen on the self-contained zi.Scoop panel. SERVED at GET /brokerage/space-demand-leads (size-banded + pipeline-deduped, 2026-07-16); a research prioritization list, NOT a conversion predictor.",
+  "status_note": "served-as-prototype (label unchanged; PR-AUC saturated ~0.34)"
 }
