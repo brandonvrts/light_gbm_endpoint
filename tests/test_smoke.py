@@ -177,6 +177,153 @@ def test_spacedemand_pipeline_dedup_fires():
     assert len(sd._pipeline_company_ids()) > 0, "in_pipeline dedup resolves an empty set (query broken?)"
 
 
+# ------------------------------------------------- MULTIFAMILY COHORTS (chatbot)
+def test_mf_cohort_registry_shape():
+    """Every cohort carries label/description/definition/predicate; the survivor-biased
+    rent-hike cohorts and the non-differentiating bare work-order cohort stay excluded."""
+    from contracts.multifamily_churn import cohorts as mc
+    assert len(mc.COHORTS) == 10
+    for k, c in mc.COHORTS.items():
+        assert k == k.lower() and " " not in k
+        for f in ("label", "description", "definition", "predicate"):
+            assert c.get(f), f"{k} missing {f}"
+    assert not any("rent" in k for k in mc.COHORTS), "rent-hike cohorts are survivor-biased"
+    assert "recent-work-order" not in mc.COHORTS, "bare work-order cohort is non-differentiating"
+
+
+def test_mf_cohort_catalog_and_report():
+    """Catalog + report agree with each other and with the validated analysis: holdover
+    is the standout (lift > 2), pending-decision excludes notice-givers, math is coherent."""
+    if not _db_ok():
+        raise Skip("no DB")
+    from contracts.multifamily_churn import cohorts as mc
+    cat = mc.catalog()
+    assert cat["population"]["n"] > 800, f"population collapsed: {cat['population']}"
+    assert 0.02 < cat["population"]["avg_churn"] < 0.30
+    keys = {c["cohort"] for c in cat["cohorts"]}
+    assert keys == set(mc.COHORTS)
+    hold = next(c for c in cat["cohorts"] if c["cohort"] == "holdover-mtm")
+    assert hold["n"] > 20 and hold["lift_vs_portfolio"] > 2.0, f"holdover lost its signal: {hold}"
+
+    rep = mc.report("holdover-mtm", top=5)
+    assert rep["n"] == hold["n"] and rep["expected_moveouts"] == hold["expected_moveouts"]
+    assert abs(rep["avg_churn"] * rep["n"] - rep["expected_moveouts"]) < 1.0, "sum/mean mismatch"
+    assert sum(rep["tier_mix"].values()) == rep["n"]
+    assert len(rep["members_top"]) == 5
+    probs = [m["churn_probability"] for m in rep["members_top"]]
+    assert probs == sorted(probs, reverse=True), "members not ranked by risk"
+    assert rep["summary"] and str(rep["n"]) in rep["summary"], "summary not chatbot-ready"
+
+    pend = mc.report("pending-decision", top=1)
+    assert pend["notice_given_n"] == 0, "pending-decision must exclude notice-givers"
+    try:
+        mc.report("no-such-cohort")
+        assert False, "unknown cohort should raise"
+    except ValueError as e:
+        assert "holdover-mtm" in str(e), "error should list valid cohorts"
+
+
+# ------------------------------------------------- PERSUADABLES (incentive targeting)
+def test_persuadables_band_and_economics():
+    """The persuadable list must be band-pure (0.2-0.6, zero notice), explain every
+    member via cohort memberships + model drivers, and keep scenario math coherent."""
+    if not _db_ok():
+        raise Skip("no DB")
+    from contracts.multifamily_churn import persuadables as pers
+    out = pers.build(top=100)
+    assert out["population"]["n"] > 800
+    assert out["n"] > 10, f"persuadable band suspiciously empty ({out['n']})"
+    assert out["n"] == len(out["members"]) or len(out["members"]) == 100
+    for m in out["members"]:
+        assert 0.20 <= m["churn_probability"] < 0.60, f"out-of-band member {m['scode']}"
+        fence = m["on_the_fence_because"]
+        assert "risk_cohorts" in fence and "protective_cohorts" in fence
+        assert m["value_if_saved"] > pers.MAKE_READY_COST, "save value must exceed make-ready"
+        assert m["monthly_rent_at_risk"] <= (m["monthly_rent"] or 0) + 1e-6 or m["monthly_rent"] is None
+    # ranked by leverage (rent at risk)
+    rar = [m["monthly_rent_at_risk"] for m in out["members"]]
+    assert rar == sorted(rar, reverse=True)
+    # at least one member shows a genuine conflict (both risk and protective cohorts)
+    assert any(m["on_the_fence_because"]["risk_cohorts"] and
+               m["on_the_fence_because"]["protective_cohorts"] for m in out["members"]), \
+        "no member shows the risk+protective conflict the surface exists to explain"
+    # model-side why present for most members (explanations are the PM value-add)
+    with_why = sum(1 for m in out["members"] if m["why"])
+    assert with_why >= 0.8 * len(out["members"]), f"explanations missing ({with_why}/{len(out['members'])})"
+    # scenario math coherence
+    sc = out["economics"]["scenario"]
+    assert sc["offers"] == out["n"]
+    assert abs(sc["total_spend"] - sc["offers"] * sc["incentive_cost_per_offer"]) < 1.0
+    assert abs(sc["expected_saves"] - out["expected_moveouts"] * sc["assumed_flip_rate"]) < 0.11
+    assert "ASSUMED" in sc["flip_rate_note"]
+    # turn-days measured (not the fallback) for at least one property
+    td = out["economics"]["turn_days"]
+    assert td["per_property"], "turn days query returned nothing (fallback everywhere)"
+    # economics must be invariant to how many members are displayed (top-N slice bug)
+    sc1 = pers.build(top=1)["economics"]["scenario"]
+    assert sc1["expected_value_saved"] == sc["expected_value_saved"], \
+        "scenario economics vary with `top` (computed over displayed slice, not the band)"
+    # band parameters propagate + junk rejected
+    try:
+        pers.build(band_low=0.7, band_high=0.3)
+        assert False, "inverted band should raise"
+    except ValueError:
+        pass
+
+
+def test_outreach_incentive_actions():
+    from contracts.multifamily_churn import outreach
+    assert {"incentive_offered", "incentive_accepted", "incentive_declined"} <= outreach._ACTIONS
+
+
+def test_incentive_accounts_registry():
+    """The 8 landlord concession accounts, and never the subsidy account (40 = income)."""
+    from contracts.multifamily_churn import incentives
+    assert len(incentives.ACCOUNTS) == 8
+    assert 53 in incentives.ACCOUNTS and incentives.ACCOUNTS[53] == "Renewal Concession"
+    assert 40 not in incentives.ACCOUNTS, "subsidy is income, not a concession"
+
+
+def test_edge_residents_month_filter_and_incentives():
+    """'Edge residents for <month>' must scope every member to that decision month,
+    and each member must carry incentive history (the surfaceable-in-API requirement)."""
+    if not _db_ok():
+        raise Skip("no DB")
+    from contracts.multifamily_churn import persuadables as pers, incentives
+    from datetime import date
+    all_band = pers.build(top=100)
+    assert all_band["n"] > 0
+    # every member surfaces an incentives block with the full shape
+    for m in all_band["members"]:
+        inc = m["incentives"]
+        assert inc is not None and {"past_concessions_n", "past_concessions_total",
+                                    "recent_concessions", "offers_logged_n"} <= set(inc)
+    # pick the most common decision month among members and filter to it
+    months = {}
+    for m in all_band["members"]:
+        if m["lease_to"]:
+            months[m["lease_to"][:7]] = months.get(m["lease_to"][:7], 0) + 1
+    target = max(months, key=months.get)
+    scoped = pers.build(top=100, month=target)
+    assert 0 < scoped["n"] <= all_band["n"]
+    assert all((m["lease_to"] or "")[:7] == target for m in scoped["members"]), \
+        f"member outside month {target}"
+    assert target in scoped["summary"]
+    try:
+        pers.build(month="August")
+        assert False, "non-YYYY-MM month should raise"
+    except ValueError:
+        pass
+    # incentive history module reads real TRANS rows (any concession-taker will do),
+    # and totals cover the FULL filtered set — independent of the display limit
+    hist = incentives.history(property_id=62, limit=5)
+    assert hist["totals"]["events"] > len(hist["events"]), \
+        "totals look capped by `limit` (CCV has decades of concessions)"
+    assert hist["events_returned"] == len(hist["events"]) <= 5
+    assert all(e["account_name"] != "unknown" for e in hist["events"])
+    assert hist["totals"]["events"] == incentives.history(property_id=62, limit=1)["totals"]["events"]
+
+
 # ------------------------------------------------- MARKETING COHORTS (Phase 1)
 def test_marketing_cohort_selector_parses():
     from contracts.marketing import space_demand as sdm

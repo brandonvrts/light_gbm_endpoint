@@ -14,16 +14,22 @@ import time
 from pathlib import Path
 
 _STORE = Path(__file__).resolve().parent.parent.parent / "monitoring" / "outreach.jsonl"
+# incentive_* actions are the persuadables measurement loop: OFFERS (accepted AND
+# declined) are what TRANS can never show — logging them creates the denominator a real
+# flip rate needs. Log incentive_offered at offer time, then incentive_accepted /
+# incentive_declined when the resident responds.
 _ACTIONS = {"called", "emailed", "visited", "offer_sent", "renewed_offer",
-            "no_answer", "note"}
+            "no_answer", "note",
+            "incentive_offered", "incentive_accepted", "incentive_declined"}
 
 
 def record(scode: str, action: str, staff: str | None = None, note: str | None = None,
            month: str | None = None, churn_probability: float | None = None,
-           risk_tier: str | None = None) -> dict:
+           risk_tier: str | None = None, incentive_cost: float | None = None) -> dict:
     """Append one outreach event. `action` is free-ish but validated against a known set
     (falls back to 'note'). The churn_probability/risk_tier snapshot should be the values
-    shown to staff at contact time (pass them through from the report row)."""
+    shown to staff at contact time (pass them through from the report row).
+    `incentive_cost` = offered concession $ (for incentive_* actions)."""
     sc = (scode or "").strip()
     if not sc:
         raise ValueError("scode required")
@@ -33,7 +39,8 @@ def record(scode: str, action: str, staff: str | None = None, note: str | None =
     rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "scode": sc, "action": act,
            "staff": (staff or "").strip() or None, "note": (note or "").strip() or None,
            "month": (month or "").strip() or None,
-           "churn_probability": churn_probability, "risk_tier": risk_tier}
+           "churn_probability": churn_probability, "risk_tier": risk_tier,
+           "incentive_cost": incentive_cost}
     _STORE.parent.mkdir(parents=True, exist_ok=True)
     with _STORE.open("a") as fh:
         fh.write(json.dumps(rec) + "\n")

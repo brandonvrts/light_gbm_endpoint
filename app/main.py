@@ -11,6 +11,10 @@ Endpoints:
   GET  /multifamily/churn-trend             month-over-month churn summary series
   POST/GET /multifamily/outreach            log/list retention outreach (uplift tracking)
   GET  /multifamily/calibration-drift       logged predicted-vs-realized per settled month
+  GET  /multifamily/cohorts                 resident-cohort catalog with live churn performance
+  GET  /multifamily/cohort-report           one cohort: stats + top at-risk members + summary
+  GET  /multifamily/persuadables            edge residents: on-the-fence list + why + economics
+  GET  /multifamily/incentives              concession history (TRANS) + logged offers
   GET  /marketing/space-demand              per-cohort "who needs space" rollup (spacedemand bundle)
   GET  /marketing/space-demand/leads        ranked space-need leads inside one cohort
   GET  /multifamily/buildings | /brokerage/companies | /marketing/options   (UI helpers)
@@ -122,6 +126,66 @@ def mf_buildings(_=Depends(require_key)):
     return clean(mf_data.list_properties())
 
 
+@app.get("/multifamily/cohorts")
+def mf_cohorts(properties: str | None = None, as_of: str | None = None,
+               _=Depends(require_key)):
+    """Resident-cohort catalog (chatbot surface): every named cohort with live size and
+    predicted performance at the next lease decision (avg churn, lift vs portfolio,
+    expected move-outs). `properties` = optional comma-separated HPROPERTY ids."""
+    from contracts.multifamily_churn import cohorts as mf_cohorts_mod
+    pids = [int(x) for x in properties.split(",") if x.strip()] if properties else None
+    return clean(mf_cohorts_mod.catalog(pids, as_of))
+
+
+@app.get("/multifamily/persuadables")
+def mf_persuadables(properties: str | None = None, as_of: str | None = None,
+                    band_low: float = 0.20, band_high: float = 0.60,
+                    incentive_cost: float | None = None, flip_rate: float = 0.25,
+                    top: int = 50, month: str | None = None, _=Depends(require_key)):
+    """The EDGE-RESIDENT / incentive-target list: residents in the persuadable churn
+    band (default 0.2-0.6, notice-filed excluded), ranked by monthly rent at risk.
+    Each member carries WHY they're on the fence (conflicting risk/protective cohort
+    memberships + the model's own drivers), their incentive history (past TRANS
+    concessions + logged offers), and a value-if-saved (avg turn days x daily rent +
+    $600 make-ready). `properties` scopes to buildings ("edge residents at Winwood" ->
+    properties=26); `month` (YYYY-MM) scopes to lease decisions landing that month
+    ("edge residents for August" -> month=2026-08). Scenario economics take
+    incentive_cost (default: one month of band avg rent) and an ASSUMED flip_rate as
+    inputs — log offers via POST /multifamily/outreach to measure the real one."""
+    from contracts.multifamily_churn import persuadables as mf_pers
+    pids = [int(x) for x in properties.split(",") if x.strip()] if properties else None
+    try:
+        return clean(mf_pers.build(pids, as_of, band_low, band_high, incentive_cost,
+                                   flip_rate, top, month))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/multifamily/incentives")
+def mf_incentives(scode: str | None = None, property: int | None = None,
+                  since: str | None = None, limit: int = 100, _=Depends(require_key)):
+    """Incentive/concession history: consumed concessions from the Yardi TRANS ledger
+    (the system of record — 8 landlord concession accounts) plus logged incentive
+    OFFERS from the outreach log. Filter by resident `scode` and/or `property`
+    (HPROPERTY id) and/or `since` (YYYY-MM-DD)."""
+    from contracts.multifamily_churn import incentives
+    return clean(incentives.history(scode, property, since, limit))
+
+
+@app.get("/multifamily/cohort-report")
+def mf_cohort_report(cohort: str, properties: str | None = None, as_of: str | None = None,
+                     top: int = 10, _=Depends(require_key)):
+    """One cohort's predicted performance: size, avg churn, lift, expected move-outs,
+    tier mix, top-N at-risk members, and a chatbot-ready natural-language `summary`.
+    `cohort` = a key from GET /multifamily/cohorts (e.g. holdover-mtm, multi-pet)."""
+    from contracts.multifamily_churn import cohorts as mf_cohorts_mod
+    pids = [int(x) for x in properties.split(",") if x.strip()] if properties else None
+    try:
+        return clean(mf_cohorts_mod.report(cohort, pids, as_of, top))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/multifamily/lease-window")
 def mf_lease_window(start: str, end: str, properties: str | None = None,
                     as_of: str | None = None, limit: int | None = None, _=Depends(require_key)):
@@ -171,6 +235,7 @@ class OutreachRecord(BaseModel):
     month: str | None = None
     churn_probability: float | None = None
     risk_tier: str | None = None
+    incentive_cost: float | None = None   # offered concession $ (incentive_* actions)
 
 
 @app.post("/multifamily/outreach")
