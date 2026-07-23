@@ -144,6 +144,17 @@ notice is already filed.
   in that month; the chatbot should resolve bare month names to YYYY-MM)
 - Both compose: `?properties=26&month=2026-08`
 
+> **For the WEEKLY WORKING LIST, prefer `GET /multifamily/edge-list` (added 2026-07-22).**
+> The persuadables endpoint recomputes membership from scratch every call — our test
+> battery showed that reshuffles month to month. The edge-list endpoint is the STABLE
+> roster: residents enter at churn ≥ 0.20 (no notice) and stay listed until something
+> actually resolves (renewal / notice / move-out) or risk falls below 0.15. Each member
+> carries a sticky `fight_for` flag (stayer-type vs roster median from the duration
+> model, decided once at entry — a PM's instruction never flips week to week), plus
+> `days_on_list`, entry snapshots, and the current 0.15–0.20 `watch` band. Every
+> enter/exit is logged with a reason (`?history=true` for the audit trail;
+> `refresh=false` for a read-only peek). Chatbot-safe `summary` included, as always.
+
 ```bash
 curl -s -H "X-API-Key: rts-local-dev-key" \
   "http://10.1.6.17:8910/multifamily/persuadables?top=25"

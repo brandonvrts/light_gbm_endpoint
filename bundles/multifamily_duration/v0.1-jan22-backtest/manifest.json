@@ -1,0 +1,266 @@
+{
+ "contract": "multifamily-duration",
+ "version": "v0.1-jan22-backtest",
+ "status": "INTERNAL (report-only, not served)",
+ "target": "remaining tenure in months from anchor, capped at 48 (fully observable for all anchors used \u2014 no censoring)",
+ "algorithm": "lightgbm l1 regression",
+ "variants": {
+  "full": "timing-aware forecast (lease clock + notice included)",
+  "trait": "stayer-type score (lease clock + notice EXCLUDED \u2014 the second circle of the two-model Venn; rank-use only)"
+ },
+ "clock_columns_excluded_from_trait": [
+  "DaysSinceNotice",
+  "DaysToLeaseEnd",
+  "HasNotice",
+  "IsLeaseExpiringSoon"
+ ],
+ "era_columns_excluded": [
+  "DecisionMonth",
+  "DecisionYear",
+  "MoveInMonth",
+  "MoveInYear"
+ ],
+ "train_anchors": [
+  "2016-01-01",
+  "2016-07-01",
+  "2017-01-01",
+  "2017-07-01",
+  "2018-01-01",
+  "2018-07-01",
+  "2019-01-01",
+  "2019-07-01",
+  "2020-01-01",
+  "2020-07-01",
+  "2021-01-01",
+  "2021-07-01"
+ ],
+ "train_rows": 6462,
+ "train_lineages": 2777,
+ "labels": "lineage-aware move-out (unit transfers chained: same property + name-or-email + <=31d gap)",
+ "backtest": {
+  "anchor": "2022-01-01",
+  "n": 599,
+  "baseline_train_mean_mae": 19.7,
+  "baseline_tenure_spearman": 0.466,
+  "full": {
+   "features_n": 41,
+   "mae_months": 2.1,
+   "median_ae_months": 0.22,
+   "spearman": 0.903,
+   "r2": 0.915,
+   "decile_calibration": [
+    {
+     "pred_mean": 2.4,
+     "real_mean": 3.1,
+     "n": 60
+    },
+    {
+     "pred_mean": 4.1,
+     "real_mean": 7.4,
+     "n": 60
+    },
+    {
+     "pred_mean": 5.7,
+     "real_mean": 8.3,
+     "n": 60
+    },
+    {
+     "pred_mean": 7.0,
+     "real_mean": 8.4,
+     "n": 60
+    },
+    {
+     "pred_mean": 8.6,
+     "real_mean": 9.4,
+     "n": 60
+    },
+    {
+     "pred_mean": 41.5,
+     "real_mean": 41.6,
+     "n": 299
+    }
+   ],
+   "bucket_matrix": {
+    "12-24mo": {
+     "12-24mo": 11,
+     "24-48mo": 1,
+     "48+mo": 1,
+     "<12mo": 11
+    },
+    "24-48mo": {
+     "12-24mo": 0,
+     "24-48mo": 0,
+     "48+mo": 244,
+     "<12mo": 0
+    },
+    "<12mo": {
+     "12-24mo": 31,
+     "24-48mo": 9,
+     "48+mo": 6,
+     "<12mo": 285
+    }
+   },
+   "feature_importance_top": [
+    {
+     "feature": "DaysToLeaseEnd",
+     "gain": 2523
+    },
+    {
+     "feature": "PlannedLeaseDays",
+     "gain": 2224
+    },
+    {
+     "feature": "TenureDaysAtAnchor",
+     "gain": 2008
+    },
+    {
+     "feature": "CurrentRent",
+     "gain": 1556
+    },
+    {
+     "feature": "RentIncreasePct",
+     "gain": 1366
+    },
+    {
+     "feature": "DaysSinceLastWorkOrder",
+     "gain": 1220
+    },
+    {
+     "feature": "PriorRent",
+     "gain": 1192
+    },
+    {
+     "feature": "AvgDaysToComplete",
+     "gain": 1183
+    },
+    {
+     "feature": "DaysSinceLastMemo",
+     "gain": 1084
+    },
+    {
+     "feature": "DaysSinceNotice",
+     "gain": 1015
+    },
+    {
+     "feature": "ActiveRent",
+     "gain": 861
+    },
+    {
+     "feature": "LeaseTermMonths",
+     "gain": 741
+    }
+   ]
+  },
+  "trait": {
+   "features_n": 37,
+   "mae_months": 2.56,
+   "median_ae_months": 0.4,
+   "spearman": 0.854,
+   "r2": 0.904,
+   "decile_calibration": [
+    {
+     "pred_mean": 3.0,
+     "real_mean": 5.9,
+     "n": 60
+    },
+    {
+     "pred_mean": 4.7,
+     "real_mean": 7.2,
+     "n": 60
+    },
+    {
+     "pred_mean": 5.8,
+     "real_mean": 7.4,
+     "n": 60
+    },
+    {
+     "pred_mean": 7.2,
+     "real_mean": 8.5,
+     "n": 60
+    },
+    {
+     "pred_mean": 8.7,
+     "real_mean": 8.1,
+     "n": 60
+    },
+    {
+     "pred_mean": 41.8,
+     "real_mean": 41.5,
+     "n": 299
+    }
+   ],
+   "bucket_matrix": {
+    "12-24mo": {
+     "12-24mo": 9,
+     "24-48mo": 2,
+     "48+mo": 1,
+     "<12mo": 15
+    },
+    "24-48mo": {
+     "12-24mo": 2,
+     "24-48mo": 0,
+     "48+mo": 244,
+     "<12mo": 1
+    },
+    "<12mo": {
+     "12-24mo": 31,
+     "24-48mo": 8,
+     "48+mo": 6,
+     "<12mo": 280
+    }
+   },
+   "feature_importance_top": [
+    {
+     "feature": "PlannedLeaseDays",
+     "gain": 3150
+    },
+    {
+     "feature": "TenureDaysAtAnchor",
+     "gain": 3028
+    },
+    {
+     "feature": "DaysSinceLastWorkOrder",
+     "gain": 1686
+    },
+    {
+     "feature": "CurrentRent",
+     "gain": 1502
+    },
+    {
+     "feature": "AvgDaysToComplete",
+     "gain": 1428
+    },
+    {
+     "feature": "RentIncreasePct",
+     "gain": 1420
+    },
+    {
+     "feature": "DaysSinceLastMemo",
+     "gain": 1304
+    },
+    {
+     "feature": "PriorRent",
+     "gain": 1126
+    },
+    {
+     "feature": "ActiveRent",
+     "gain": 830
+    },
+    {
+     "feature": "WorkOrders_Last365Days",
+     "gain": 607
+    },
+    {
+     "feature": "WorkOrderCount",
+     "gain": 586
+    },
+    {
+     "feature": "LeaseTermMonths",
+     "gain": 474
+    }
+   ]
+  }
+ },
+ "regime_caveat": "the 2022 cohort was tenure-bimodal (post-COVID pile-up, then the 2022 purge) and thus unusually separable; today's population has more mid-tenure mass \u2014 treat absolute months as rank scores",
+ "trained_at": "2026-07-22"
+}

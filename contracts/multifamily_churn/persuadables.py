@@ -10,12 +10,15 @@ Each member carries WHY they're on the fence: their conflicting cohort membershi
 honest as the population drifts) plus the model's own top drivers for that resident.
 
 Economics (Brandon's parameters): value of a save = avg turn days x the resident's
-daily rent + $600 flat make-ready. Turn days are measured from TENANT unit-vacancy gaps
-(move-out -> next move-in on the same unit, recent window), per property, with a
-fallback when a property has too few turns. Scenario math takes `incentive_cost` and
-`flip_rate` as INPUTS — no measured flip rate exists yet (TRANS records consumed
-concessions, not offers); the outreach log's incentive_* actions accumulate the
-denominator that turns the assumption into a measurement.
+daily rent + $600 flat make-ready, MINUS the net re-lease premium over one lease term
+(we typically re-let turned units above the leaving rent; only the premium above the
+renewal increase we'd have taken anyway counts against retention). Turn days and relet
+premiums are measured from TENANT consecutive tenancies per property, with fallbacks.
+Scenario math takes `incentive_cost` and `flip_rate` as INPUTS — no measured flip rate
+exists yet (TRANS records consumed concessions, not offers); the outreach log's
+incentive_* actions accumulate the denominator that turns the assumption into a
+measurement. Key derived metric: cost_per_save = spend / expected saves, which must
+stay below value_per_save for the program to pay.
 """
 from __future__ import annotations
 import time
@@ -32,7 +35,9 @@ _AVG_DAYS_PER_MONTH = 30.44
 _RISK_LIFT, _PROTECTIVE_LIFT = 1.05, 0.95
 
 _TURN_CACHE: dict = {}
+_RELET_CACHE: dict = {}
 _TURN_TTL = 24 * 3600
+_EXTENSION_MONTHS = 12          # a save = one more lease term (the 1-yr extension view)
 
 
 def _turn_days(property_ids: list[int]) -> dict:
@@ -72,6 +77,49 @@ def _turn_days(property_ids: list[int]) -> dict:
     except Exception:  # noqa: BLE001 — economics degrade to the fallback, never 500
         pass
     _TURN_CACHE[key] = (time.time(), out)
+    return out
+
+
+def _relet_premium(property_ids: list[int]) -> dict:
+    """Re-lease rent delta per property: next tenant's rent vs the leaving tenant's, on
+    the same unit (consecutive tenancies, last 4 years, sane rents, ±50% outliers cut).
+    A re-lease PREMIUM shrinks the retention case — losing the resident buys a higher
+    market rent — so it's deducted from value-if-saved, NET of the renewal increase we
+    would have taken anyway. Cached 24h; failure -> zero adjustment (never blocks)."""
+    key = tuple(sorted(property_ids))
+    hit = _RELET_CACHE.get(key)
+    if hit and time.time() - hit[0] < _TURN_TTL:
+        return hit[1]
+    ids = ",".join(str(int(p)) for p in property_ids)
+    out = {"per_property": {}, "portfolio_avg_pct": 0.0,
+           "method": "consecutive-tenancy rent delta on same unit (TENANT, last 4 years)"}
+    try:
+        df = db.query(f"""
+            SELECT HPROPERTY, AVG(delta_pct) avg_pct, COUNT(*) pairs
+            FROM (
+              SELECT HPROPERTY, DTMOVEOUT,
+                     (LEAD(SRENT) OVER (PARTITION BY HPROPERTY, HUNIT ORDER BY DTMOVEIN)
+                      - SRENT) / NULLIF(SRENT, 0) * 100.0 AS delta_pct,
+                     SRENT,
+                     LEAD(SRENT) OVER (PARTITION BY HPROPERTY, HUNIT ORDER BY DTMOVEIN) AS next_rent
+              FROM [{db.DB_YARDI}].dbo.TENANT
+              WHERE HPROPERTY IN ({ids}) AND DTMOVEIN IS NOT NULL AND SRENT > 200
+            ) g
+            WHERE next_rent > 200 AND DTMOVEOUT >= DATEADD(YEAR,-4,GETDATE())
+              AND delta_pct BETWEEN -50 AND 50
+            GROUP BY HPROPERTY""")
+        if not df.empty:
+            per = {int(r["HPROPERTY"]): {"relet_premium_pct": round(float(r["avg_pct"]), 2),
+                                         "pairs_measured": int(r["pairs"])}
+                   for r in df.to_dict("records")}
+            out["per_property"] = per
+            tot = sum(v["pairs_measured"] for v in per.values())
+            if tot:
+                out["portfolio_avg_pct"] = round(sum(
+                    v["relet_premium_pct"] * v["pairs_measured"] for v in per.values()) / tot, 2)
+    except Exception:  # noqa: BLE001
+        pass
+    _RELET_CACHE[key] = (time.time(), out)
     return out
 
 
@@ -166,6 +214,13 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
 
     classes = _cohort_classes(df)
     turns = _turn_days(pids)
+    relet = _relet_premium(pids)
+    # typical renewal increase per property (what we'd have charged the retained
+    # resident anyway) — the relet premium only counts NET of this
+    ri = pd.to_numeric(df.get("RentIncreasePct"), errors="coerce")
+    pid_col = pd.to_numeric(df.get("PropertyId"), errors="coerce")
+    renewal_pct = {int(p): round(float(v), 2)
+                   for p, v in ri.groupby(pid_col).mean().dropna().items()}
 
     # model-side explanations (why/drivers) via the serving path, one batch call
     why_by_scode: dict = {}
@@ -178,11 +233,19 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
 
     g["_rent_at_risk"] = g["p_churn"] * g["_rent"]
     # per-resident value-if-saved over the WHOLE band (economics must not depend on
-    # how many members the caller displays)
+    # how many members the caller displays):
+    #   turn cost (vacancy + make-ready) − net re-lease premium over one lease term.
+    # Re-leasing at a premium means a move-out buys higher market rent, which shrinks
+    # what a save is worth — but only the premium ABOVE the renewal increase we would
+    # have taken from the retained resident counts.
     def _save_value(r) -> float:
         pid = int(r["PropertyId"]) if pd.notna(r.get("PropertyId")) else None
         t = (turns["per_property"].get(pid) or {}).get("avg_turn_days", turns["portfolio_avg"])
-        return round(t * (float(r["_rent"]) / _AVG_DAYS_PER_MONTH) + MAKE_READY_COST, 0)
+        rent = float(r["_rent"])
+        base = t * (rent / _AVG_DAYS_PER_MONTH) + MAKE_READY_COST
+        rl = (relet["per_property"].get(pid) or {}).get("relet_premium_pct", relet["portfolio_avg_pct"])
+        net_pct = rl - renewal_pct.get(pid, 0.0)
+        return round(max(base - net_pct / 100.0 * rent * _EXTENSION_MONTHS, 0.0), 0)
     g["_save_value"] = [_save_value(r) for r in g.to_dict("records")]
     g = g.sort_values("_rent_at_risk", ascending=False)
     shown = g.head(max(int(top), 0))
@@ -222,10 +285,22 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
     expected_saves = exp_moveouts * flip_rate
     spend = len(g) * cost
     value_saved = expected_saves * avg_save_value
+    cost_per_save = round(spend / expected_saves, 0) if expected_saves > 0 else None
     economics = {
         "turn_days": turns,
         "make_ready_cost": MAKE_READY_COST,
-        "value_per_save_note": "avg_turn_days x resident daily rent + make-ready flat fee",
+        "relet_premium": {**relet, "renewal_increase_pct_by_property": renewal_pct,
+                          "note": "we typically re-lease turned units ABOVE the leaving "
+                                  "rent; only the premium net of the renewal increase we'd "
+                                  "have taken anyway is deducted from value-if-saved "
+                                  f"(over {_EXTENSION_MONTHS} months)"},
+        "value_per_save_note": "avg_turn_days x resident daily rent + make-ready flat fee "
+                               "- net re-lease premium over one lease term",
+        "do_nothing": {
+            "expected_moveouts": round(exp_moveouts, 1),
+            "turnover_loss": round(float((g["p_churn"] * g["_save_value"]).sum()), 0),
+            "note": "the no-intervention baseline: expected move-outs x each resident's "
+                    "turn value, this decision window"},
         "scenario": {
             "incentive_cost_per_offer": cost,
             "incentive_cost_source": "input" if incentive_cost is not None
@@ -237,16 +312,24 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
             "offers": int(len(g)), "total_spend": round(spend, 0),
             "expected_saves": round(expected_saves, 1),
             "expected_value_saved": round(value_saved, 0),
-            "net": round(value_saved - spend, 0)}}
+            "net": round(value_saved - spend, 0),
+            "cost_per_save": cost_per_save,
+            "value_per_save": round(avg_save_value, 0),
+            "pays": (cost_per_save is not None and cost_per_save <= avg_save_value),
+            "breakeven_concession_per_offer": round(
+                expected_saves * avg_save_value / len(g), 0) if len(g) else None,
+            "cost_per_save_note": "spend / expected saves — must stay below value_per_save "
+                                  "or the program spends a dollar to save less than one"}}
 
     scope = f" with a lease decision in {month}" if month else ""
     summary = (
         f"{len(g)} residents sit in the persuadable band ({band_low}-{band_high} churn "
         f"probability, no notice){scope} out of {pop['n']} scored — {exp_moveouts:.1f} expected "
-        f"move-outs and ${float(g['_rent_at_risk'].sum()):,.0f}/mo rent at risk. At a "
-        f"${cost:,.0f} incentive and an ASSUMED {int(flip_rate * 100)}% flip rate: "
-        f"{expected_saves:.1f} expected saves worth ${value_saved:,.0f} vs "
-        f"${spend:,.0f} spend (net ${value_saved - spend:,.0f}). "
+        f"move-outs worth ${float((g['p_churn'] * g['_save_value']).sum()):,.0f} in turns if we "
+        f"do nothing. At a ${cost:,.0f} incentive and an ASSUMED {int(flip_rate * 100)}% flip "
+        f"rate: {expected_saves:.1f} expected saves worth ${value_saved:,.0f} vs ${spend:,.0f} "
+        f"spend (net ${value_saved - spend:,.0f}; cost per save ${(cost_per_save or 0):,.0f} vs "
+        f"${avg_save_value:,.0f} value). "
         f"{pop['sure_things_n']} residents below the band are the do-not-disturb list.")
 
     return {**meta, "population": pop, "n": int(len(g)),

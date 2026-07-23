@@ -14,6 +14,7 @@ Endpoints:
   GET  /multifamily/cohorts                 resident-cohort catalog with live churn performance
   GET  /multifamily/cohort-report           one cohort: stats + top at-risk members + summary
   GET  /multifamily/persuadables            edge residents: on-the-fence list + why + economics
+  GET  /multifamily/edge-list               STABLE fight-for roster (hysteresis) + watch band
   GET  /multifamily/incentives              concession history (TRANS) + logged offers
   GET  /marketing/space-demand              per-cohort "who needs space" rollup (spacedemand bundle)
   GET  /marketing/space-demand/leads        ranked space-need leads inside one cohort
@@ -159,6 +160,20 @@ def mf_persuadables(properties: str | None = None, as_of: str | None = None,
                                    flip_rate, top, month))
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@app.get("/multifamily/edge-list")
+def mf_edge_list(refresh: bool = True, history: bool = False, _=Depends(require_key)):
+    """The STABLE edge roster (hysteresis, battery fix 2026-07-22): residents enter at
+    churn p>=0.20 (no notice) and stay listed until something actually resolves —
+    renewal, notice, move-out — or risk falls below 0.15. `fight_for` (stayer-type vs
+    roster median, duration model) is decided at entry and never flips. Includes the
+    0.15-0.20 watch band and this refresh's enter/exit events. history=true -> the
+    audit log of all roster changes. refresh=false -> read-only (no state update)."""
+    from contracts.multifamily_churn import edge
+    if history:
+        return clean(edge.roster_history())
+    return clean(edge.edge_list(persist=refresh))
 
 
 @app.get("/multifamily/incentives")

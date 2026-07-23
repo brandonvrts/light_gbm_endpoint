@@ -238,7 +238,9 @@ def test_persuadables_band_and_economics():
         assert 0.20 <= m["churn_probability"] < 0.60, f"out-of-band member {m['scode']}"
         fence = m["on_the_fence_because"]
         assert "risk_cohorts" in fence and "protective_cohorts" in fence
-        assert m["value_if_saved"] > pers.MAKE_READY_COST, "save value must exceed make-ready"
+        # value_if_saved = turn cost NET of the re-lease premium — non-negative, and
+        # (given our measured premiums) below the raw vacancy+make-ready ceiling
+        assert 0 <= m["value_if_saved"] < 10000, f"save value implausible: {m['value_if_saved']}"
         assert m["monthly_rent_at_risk"] <= (m["monthly_rent"] or 0) + 1e-6 or m["monthly_rent"] is None
     # ranked by leverage (rent at risk)
     rar = [m["monthly_rent_at_risk"] for m in out["members"]]
@@ -256,6 +258,24 @@ def test_persuadables_band_and_economics():
     assert abs(sc["total_spend"] - sc["offers"] * sc["incentive_cost_per_offer"]) < 1.0
     assert abs(sc["expected_saves"] - out["expected_moveouts"] * sc["assumed_flip_rate"]) < 0.11
     assert "ASSUMED" in sc["flip_rate_note"]
+    # cost_per_save = spend / saves; `pays` iff it undercuts value_per_save; breakeven
+    # concession is where spend == value (expected_saves is display-rounded -> loose tol)
+    assert abs(sc["cost_per_save"] - sc["total_spend"] / sc["expected_saves"]) \
+        < 0.05 * sc["cost_per_save"] + 5
+    assert sc["pays"] == (sc["cost_per_save"] <= sc["value_per_save"])
+    # both sides reconstructed from display-rounded fields -> relative tolerance
+    assert abs(sc["breakeven_concession_per_offer"] * sc["offers"]
+               - sc["expected_saves"] * sc["value_per_save"]) \
+        < 0.03 * sc["expected_saves"] * sc["value_per_save"] + 50
+    # do-nothing baseline: turnover loss consistent with expected move-outs x values
+    dn = out["economics"]["do_nothing"]
+    assert dn["expected_moveouts"] == out["expected_moveouts"]
+    assert dn["turnover_loss"] > 0
+    # re-lease premium measured (all 5 properties re-let at a premium as of 2026-07)
+    rp = out["economics"]["relet_premium"]
+    assert rp["per_property"], "relet premium query returned nothing"
+    assert rp["portfolio_avg_pct"] > 0, "portfolio relet premium expected positive"
+    assert rp["renewal_increase_pct_by_property"], "renewal increases missing"
     # turn-days measured (not the fallback) for at least one property
     td = out["economics"]["turn_days"]
     assert td["per_property"], "turn days query returned nothing (fallback everywhere)"
@@ -322,6 +342,67 @@ def test_edge_residents_month_filter_and_incentives():
     assert hist["events_returned"] == len(hist["events"]) <= 5
     assert all(e["account_name"] != "unknown" for e in hist["events"])
     assert hist["totals"]["events"] == incentives.history(property_id=62, limit=1)["totals"]["events"]
+
+
+# ------------------------------------------------- EDGE LIST (hysteresis)
+def test_edge_hysteresis_rules_offline():
+    """The pure decision function: enter at 0.20, survive dips to 0.15, exit only on
+    resolution (renewal/notice/move-out) or p<0.15; fight_for sticky from entry."""
+    from contracts.multifamily_churn.edge import apply_hysteresis
+
+    def row(scode, p, notice=False, lease_to="2026-09-01", trait=5.0, pct=20.0):
+        return {"scode": scode, "name": scode, "unit": "1", "property_id": 62, "p": p,
+                "notice": notice, "lease_to": lease_to, "d2e": 30, "trait": trait,
+                "trait_pctile": pct, "monthly_rent": 1000.0}
+
+    # cycle 1: two entrants; higher-trait one becomes fight_for
+    rows = {"a": row("a", 0.30, trait=8.0), "b": row("b", 0.25, trait=2.0),
+            "c": row("c", 0.18)}                       # c: watch band, must NOT enter
+    st, ev = apply_hysteresis({}, rows, "2026-07-01")
+    assert set(st) == {"a", "b"} and st["a"]["fight_for"] and not st["b"]["fight_for"]
+    assert all(e["event"] == "enter" for e in ev)
+
+    # cycle 2: a dips to 0.17 (flap zone) -> STAYS, fight_for unchanged; b renews -> exits
+    rows2 = {"a": row("a", 0.17, trait=1.0), "b": row("b", 0.25, lease_to="2027-09-01")}
+    st2, ev2 = apply_hysteresis(st, rows2, "2026-08-01")
+    assert "a" in st2 and st2["a"]["fight_for"] is True, "dip to 0.17 must not evict"
+    assert st2["a"]["trait_at_entry"] == 8.0, "entry snapshot must be preserved"
+    assert "b" not in st2 and any(e["reason"] == "renewed" for e in ev2)
+
+    # cycle 3: a below 0.15 -> exits; d gives notice while listed -> exits; e moved out
+    st2["d"] = {**st2.get("d", {}), "scode": "d", "entered": "2026-08-01",
+                "p_at_entry": 0.3, "trait_at_entry": 3.0, "lease_to_at_entry": "2026-09-01",
+                "fight_for": False}
+    st2["e"] = {"scode": "e", "entered": "2026-08-01", "p_at_entry": 0.3,
+                "trait_at_entry": 3.0, "lease_to_at_entry": "2026-09-01", "fight_for": False}
+    rows3 = {"a": row("a", 0.10), "d": row("d", 0.40, notice=True)}
+    st3, ev3 = apply_hysteresis(st2, rows3, "2026-09-01")
+    reasons = {e["scode"]: e["reason"] for e in ev3 if e["event"] == "exit"}
+    assert st3 == {} and reasons == {"a": "risk_subsided", "d": "gave_notice", "e": "moved_out"}
+
+
+def test_edge_list_live_idempotent():
+    """Live: same-day calls return identical membership; invariants hold; historical
+    as_of never rewrites the stored roster."""
+    if not _db_ok():
+        raise Skip("no DB")
+    from contracts.multifamily_churn import edge
+    a = edge.edge_list()
+    b = edge.edge_list()
+    assert {m["scode"] for m in a["members"]} == {m["scode"] for m in b["members"]}, \
+        "same-day edge list not idempotent"
+    assert b["changes_this_refresh"] == [], "second same-day refresh must be a no-op"
+    for m in a["members"]:
+        assert m["p_at_entry"] >= edge.ENTER_P - 1e-9
+        assert m["churn_probability"] >= edge.EXIT_P - 1e-9, "member below exit line survived"
+        assert isinstance(m["fight_for"], bool)
+    for w in a["watch"]:
+        assert edge.WATCH_P - 1e-9 <= w["churn_probability"] < edge.ENTER_P + 1e-9
+    assert a["fight_for_n"] >= 1, "no fight-for residents at all (suspicious)"
+    # preview of an old date must not move state
+    before = edge._load_state()
+    edge.edge_list(as_of="2026-01-01")
+    assert edge._load_state() == before, "historical as_of rewrote the roster"
 
 
 # ------------------------------------------------- MARKETING COHORTS (Phase 1)
