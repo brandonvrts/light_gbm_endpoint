@@ -15,10 +15,17 @@ daily rent + $600 flat make-ready, MINUS the net re-lease premium over one lease
 renewal increase we'd have taken anyway counts against retention). Turn days and relet
 premiums are measured from TENANT consecutive tenancies per property, with fallbacks.
 Scenario math takes `incentive_cost` and `flip_rate` as INPUTS — no measured flip rate
-exists yet (TRANS records consumed concessions, not offers); the outreach log's
-incentive_* actions accumulate the denominator that turns the assumption into a
-measurement. Key derived metric: cost_per_save = spend / expected saves, which must
-stay below value_per_save for the program to pay.
+exists (TRANS records consumed concessions, not offers), and the Phase 0 review
+(docs/PHASE0_DISCOVERY_62W_2026-08-18.md, 2026-08-18) established the historical
+observational bound is single digits inside a ±5–13pp confounding floor. Consequently
+`flip_rate` no longer defaults: with no rate passed, the scenario reports the
+assumption-free BREAKEVEN flip rate (the rate at which spend = value saved) instead of
+speculative save counts. The outreach log's incentive_* actions accumulate the
+denominator that turns assumption into measurement.
+
+Scoring uses the h180 renewal-forecast bundle explicitly (not the serving default):
+the h60 triage ranker compresses nearly the whole population below the band floor
+(3 vs 18 band members at 62W — Phase 0 memo §4).
 """
 from __future__ import annotations
 import time
@@ -29,6 +36,10 @@ from core import db
 from contracts.multifamily_churn import cohorts, contract, data
 
 BAND_LOW, BAND_HIGH = 0.20, 0.60
+# The band is defined on the churn probability at the NEXT LEASE DECISION — that is
+# the 180-day renewal forecast, not the 60-day triage ranker the registry serves by
+# default. Pinned here so a default-bundle change can't silently empty the band.
+RENEWAL_BUNDLE = "v6-roadmap-h180"
 MAKE_READY_COST = 600.0
 FALLBACK_TURN_DAYS = 45.0
 _AVG_DAYS_PER_MONTH = 30.44
@@ -161,11 +172,11 @@ def _memberships(row: pd.Series, classes: dict) -> dict:
 
 def build(property_ids: list[int] | None = None, as_of: str | None = None,
           band_low: float = BAND_LOW, band_high: float = BAND_HIGH,
-          incentive_cost: float | None = None, flip_rate: float = 0.25,
+          incentive_cost: float | None = None, flip_rate: float | None = None,
           top: int = 50, month: str | None = None) -> dict:
     if not (0.0 <= band_low < band_high <= 1.0):
         raise ValueError(f"band must satisfy 0 <= low < high <= 1 (got {band_low}, {band_high})")
-    if not (0.0 < flip_rate <= 1.0):
+    if flip_rate is not None and not (0.0 < flip_rate <= 1.0):
         raise ValueError(f"flip_rate must be in (0, 1] (got {flip_rate})")
     month = (month or "").strip()[:7] or None
     if month:
@@ -175,10 +186,11 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
         except Exception:
             raise ValueError(f"month must be YYYY-MM (got '{month}')")
     pids = sorted(int(p) for p in (property_ids or data.DEFAULT_PROPERTY_IDS))
-    df, b = cohorts._scored_frame(pids, as_of)
+    df, b = cohorts._scored_frame(pids, as_of, version=RENEWAL_BUNDLE)
     asof = data._safe_asof(as_of)
     meta = {"contract": "multifamily-churn", "view": "persuadables",
-            "model_version": b.get("version"), "as_of": asof,
+            "model_version": b.get("version"),
+            "horizon_days": b.get("horizon_days"), "as_of": asof,
             "properties": [{"property_id": p, "name": data.PROPERTIES.get(p)} for p in pids],
             "month": month,
             "band": {"low": band_low, "high": band_high,
@@ -282,10 +294,16 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
     cost = float(incentive_cost) if incentive_cost is not None else round(avg_rent, 0)
     exp_moveouts = float(g["p_churn"].sum())
     avg_save_value = float(g["_save_value"].mean())
-    expected_saves = exp_moveouts * flip_rate
     spend = len(g) * cost
-    value_saved = expected_saves * avg_save_value
-    cost_per_save = round(spend / expected_saves, 0) if expected_saves > 0 else None
+    # the assumption-free number: the flip rate at which spend = value saved
+    breakeven_flip = (round(spend / (exp_moveouts * avg_save_value), 3)
+                      if exp_moveouts > 0 and avg_save_value > 0 else None)
+    if flip_rate is not None:
+        expected_saves = exp_moveouts * flip_rate
+        value_saved = expected_saves * avg_save_value
+        cost_per_save = round(spend / expected_saves, 0) if expected_saves > 0 else None
+    else:
+        expected_saves = value_saved = cost_per_save = None
     economics = {
         "turn_days": turns,
         "make_ready_cost": MAKE_READY_COST,
@@ -306,30 +324,47 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
             "incentive_cost_source": "input" if incentive_cost is not None
                                      else "default: one month of band avg rent",
             "assumed_flip_rate": flip_rate,
-            "flip_rate_note": "ASSUMED — no measured flip rate exists yet; log offers via "
-                              "POST /multifamily/outreach (incentive_offered/accepted/"
-                              "declined) to measure it",
+            "flip_rate_note": ("ASSUMED — caller-supplied input, not a measurement"
+                               if flip_rate is not None else
+                               "NONE PASSED — no measured flip rate exists, and the Phase 0 "
+                               "review (2026-08-18) found the historical observational bound "
+                               "is single digits inside a ±5–13pp confounding floor; "
+                               "breakeven_flip_rate below is the assumption-free read. Log "
+                               "offers via POST /multifamily/outreach to measure the real rate"),
             "offers": int(len(g)), "total_spend": round(spend, 0),
-            "expected_saves": round(expected_saves, 1),
-            "expected_value_saved": round(value_saved, 0),
-            "net": round(value_saved - spend, 0),
+            "breakeven_flip_rate": breakeven_flip,
+            "breakeven_flip_rate_note": "the flip rate at which spend = value saved; the "
+                                        "program pays iff the TRUE rate exceeds this",
+            "expected_saves": round(expected_saves, 1) if expected_saves is not None else None,
+            "expected_value_saved": round(value_saved, 0) if value_saved is not None else None,
+            "net": round(value_saved - spend, 0) if value_saved is not None else None,
             "cost_per_save": cost_per_save,
             "value_per_save": round(avg_save_value, 0),
-            "pays": (cost_per_save is not None and cost_per_save <= avg_save_value),
+            "pays": (cost_per_save is not None and cost_per_save <= avg_save_value)
+                    if flip_rate is not None else None,
             "breakeven_concession_per_offer": round(
-                expected_saves * avg_save_value / len(g), 0) if len(g) else None,
+                expected_saves * avg_save_value / len(g), 0)
+                if (expected_saves is not None and len(g)) else None,
             "cost_per_save_note": "spend / expected saves — must stay below value_per_save "
                                   "or the program spends a dollar to save less than one"}}
 
     scope = f" with a lease decision in {month}" if month else ""
+    do_nothing = float((g['p_churn'] * g['_save_value']).sum())
+    if flip_rate is not None:
+        tail = (f"At a ${cost:,.0f} incentive and an ASSUMED {int(flip_rate * 100)}% flip "
+                f"rate: {expected_saves:.1f} expected saves worth ${value_saved:,.0f} vs "
+                f"${spend:,.0f} spend (net ${value_saved - spend:,.0f}; cost per save "
+                f"${(cost_per_save or 0):,.0f} vs ${avg_save_value:,.0f} value).")
+    else:
+        tail = (f"At a ${cost:,.0f} incentive per offer (${spend:,.0f} total), the program "
+                f"pays iff the true flip rate exceeds "
+                f"{(breakeven_flip or 0) * 100:.0f}% — no measured rate exists "
+                f"(historical bound: single digits), so no save count is projected.")
     summary = (
         f"{len(g)} residents sit in the persuadable band ({band_low}-{band_high} churn "
-        f"probability, no notice){scope} out of {pop['n']} scored — {exp_moveouts:.1f} expected "
-        f"move-outs worth ${float((g['p_churn'] * g['_save_value']).sum()):,.0f} in turns if we "
-        f"do nothing. At a ${cost:,.0f} incentive and an ASSUMED {int(flip_rate * 100)}% flip "
-        f"rate: {expected_saves:.1f} expected saves worth ${value_saved:,.0f} vs ${spend:,.0f} "
-        f"spend (net ${value_saved - spend:,.0f}; cost per save ${(cost_per_save or 0):,.0f} vs "
-        f"${avg_save_value:,.0f} value). "
+        f"probability at the {b.get('horizon_days')}-day renewal decision, no notice){scope} "
+        f"out of {pop['n']} scored — {exp_moveouts:.1f} expected move-outs worth "
+        f"${do_nothing:,.0f} in turns if we do nothing. {tail} "
         f"{pop['sure_things_n']} residents below the band are the do-not-disturb list.")
 
     return {**meta, "population": pop, "n": int(len(g)),

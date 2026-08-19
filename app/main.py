@@ -141,18 +141,21 @@ def mf_cohorts(properties: str | None = None, as_of: str | None = None,
 @app.get("/multifamily/persuadables")
 def mf_persuadables(properties: str | None = None, as_of: str | None = None,
                     band_low: float = 0.20, band_high: float = 0.60,
-                    incentive_cost: float | None = None, flip_rate: float = 0.25,
+                    incentive_cost: float | None = None, flip_rate: float | None = None,
                     top: int = 50, month: str | None = None, _=Depends(require_key)):
     """The EDGE-RESIDENT / incentive-target list: residents in the persuadable churn
-    band (default 0.2-0.6, notice-filed excluded), ranked by monthly rent at risk.
-    Each member carries WHY they're on the fence (conflicting risk/protective cohort
-    memberships + the model's own drivers), their incentive history (past TRANS
-    concessions + logged offers), and a value-if-saved (avg turn days x daily rent +
-    $600 make-ready). `properties` scopes to buildings ("edge residents at Winwood" ->
-    properties=26); `month` (YYYY-MM) scopes to lease decisions landing that month
-    ("edge residents for August" -> month=2026-08). Scenario economics take
-    incentive_cost (default: one month of band avg rent) and an ASSUMED flip_rate as
-    inputs — log offers via POST /multifamily/outreach to measure the real one."""
+    band (default 0.2-0.6 at the 180-day renewal decision, notice-filed excluded),
+    ranked by monthly rent at risk. Scored on the h180 renewal-forecast bundle (the
+    h60 triage default compresses the band — Phase 0 memo 2026-08-18). Each member
+    carries WHY they're on the fence (conflicting risk/protective cohort memberships
+    + the model's own drivers), their incentive history (past TRANS concessions +
+    logged offers), and a value-if-saved (avg turn days x daily rent + $600
+    make-ready). `properties` scopes to buildings ("edge residents at Winwood" ->
+    properties=26); `month` (YYYY-MM) scopes to lease decisions landing that month.
+    Scenario economics take incentive_cost (default: one month of band avg rent);
+    `flip_rate` has NO default — omitted, the scenario reports the assumption-free
+    breakeven flip rate instead of projected saves (no measured rate exists; log
+    offers via POST /multifamily/outreach to measure one)."""
     from contracts.multifamily_churn import persuadables as mf_pers
     pids = [int(x) for x in properties.split(",") if x.strip()] if properties else None
     try:

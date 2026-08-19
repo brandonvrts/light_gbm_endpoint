@@ -252,7 +252,19 @@ def test_persuadables_band_and_economics():
     # model-side why present for most members (explanations are the PM value-add)
     with_why = sum(1 for m in out["members"] if m["why"])
     assert with_why >= 0.8 * len(out["members"]), f"explanations missing ({with_why}/{len(out['members'])})"
-    # scenario math coherence
+    # the band is scored on the h180 renewal forecast, never the h60 triage default
+    assert out["model_version"] == pers.RENEWAL_BUNDLE, out["model_version"]
+    assert out["horizon_days"] == 180
+    # DEFAULT MODE (no flip_rate): assumption-free breakeven, no projected saves
+    sc0 = out["economics"]["scenario"]
+    assert sc0["assumed_flip_rate"] is None and sc0["expected_saves"] is None \
+        and sc0["pays"] is None
+    assert "NONE PASSED" in sc0["flip_rate_note"]
+    # breakeven flip rate is where spend == value saved
+    assert abs(sc0["breakeven_flip_rate"] * out["expected_moveouts"] * sc0["value_per_save"]
+               - sc0["total_spend"]) < 0.02 * sc0["total_spend"] + 50
+    # SCENARIO MODE (explicit flip_rate): the projected-save math must stay coherent
+    out = pers.build(top=100, flip_rate=0.25)
     sc = out["economics"]["scenario"]
     assert sc["offers"] == out["n"]
     assert abs(sc["total_spend"] - sc["offers"] * sc["incentive_cost_per_offer"]) < 1.0
@@ -280,7 +292,7 @@ def test_persuadables_band_and_economics():
     td = out["economics"]["turn_days"]
     assert td["per_property"], "turn days query returned nothing (fallback everywhere)"
     # economics must be invariant to how many members are displayed (top-N slice bug)
-    sc1 = pers.build(top=1)["economics"]["scenario"]
+    sc1 = pers.build(top=1, flip_rate=0.25)["economics"]["scenario"]
     assert sc1["expected_value_saved"] == sc["expected_value_saved"], \
         "scenario economics vary with `top` (computed over displayed slice, not the band)"
     # band parameters propagate + junk rejected
@@ -583,6 +595,25 @@ def test_spacedemand_score_universe_shared():
     in_mkt = df[df["State"].isin({"Iowa", "Nebraska", "IA", "NE"})]
     assert out["leads"][0]["propensity"] == round(float(in_mkt["propensity"].max()), 4), \
         "top lead propensity != universe max (leads no longer a view over score_universe?)"
+
+
+def test_spacedemand_bulk_scores_feed():
+    """scores() is the nightly persistence feed (Signal Desk rea.CompanyModelScore):
+    full universe with no market filter, DSM/OMA accepted as market aliases, rows the
+    same shape leads() serves, trained_at surfaced for staleness display."""
+    if not _db_ok():
+        raise Skip("no DB")
+    from contracts.signal_desk_spacedemand import data as sd
+    df, b = sd.score_universe()
+    out = sd.scores()
+    assert out["count"] == len(df), "scores() must return the FULL universe by default"
+    assert out["trained_at"], "trained_at missing (Signal Desk request #7)"
+    assert out["scores"][0]["propensity"] >= out["scores"][-1]["propensity"]
+    lead_keys = set(sd.leads(limit=1)["leads"][0])
+    assert set(out["scores"][0]) == lead_keys, "scores row shape drifted from leads rows"
+    dsm = sd.scores(market="DSM,OMA")
+    ia = sd.scores(market="IA,NE")
+    assert dsm["count"] == ia["count"] > 0, "DSM/OMA aliases must resolve to IA/NE"
 
 
 def _run():

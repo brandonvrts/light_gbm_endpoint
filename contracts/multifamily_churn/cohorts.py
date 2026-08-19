@@ -19,6 +19,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
+from core import registry
 from contracts.multifamily_churn import contract, data, prepare_v4
 
 _TTL = 3600
@@ -99,13 +100,19 @@ COHORTS: dict[str, dict] = {
 }
 
 
-def _scored_frame(property_ids: list[int] | None, as_of: str | None):
+def _scored_frame(property_ids: list[int] | None, as_of: str | None,
+                  version: str | None = None):
     """Active population scored via the exact serving path (bundle + semantic fixes +
     prepare_v4). Returns (frame incl. `p_churn` calibrated pre-clip + `_d2e` real
-    calendar days-to-lease-end, bundle). Cached 1h per (properties, as-of)."""
+    calendar days-to-lease-end, bundle). Cached 1h per (properties, as-of, version).
+
+    `version` overrides the registry default bundle. Views whose semantics need the
+    180-day renewal forecast (e.g. the persuadable band — the h60 triage ranker
+    compresses almost everyone below the band floor; Phase 0 memo §4, 2026-08-18)
+    pass an explicit h180 version; None keeps the serving default."""
     pids = sorted(int(p) for p in (property_ids or data.DEFAULT_PROPERTY_IDS))
     asof = data._safe_asof(as_of)
-    key = (tuple(pids), asof)
+    key = (tuple(pids), asof, version)
     hit = _CACHE.get(key)
     if hit and time.time() - hit[0] < _TTL:
         return hit[1]
@@ -113,7 +120,7 @@ def _scored_frame(property_ids: list[int] | None, as_of: str | None):
         hit = _CACHE.get(key)
         if hit and time.time() - hit[0] < _TTL:
             return hit[1]
-        b = contract._bundle()
+        b = contract._bundle() if version is None else registry.load("multifamily_churn", version)
         scodes = data.active_rentable_scodes(pids, asof)
         df = contract._extract_features(scodes, asof, b)
         if not df.empty:

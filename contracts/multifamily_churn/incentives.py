@@ -35,7 +35,8 @@ def _events_df(scodes: list[str] | None = None, property_id: int | None = None,
                since: str | None = None, limit: int = 500) -> pd.DataFrame:
     """Concession credit events from TRANS, newest first. Filter by resident scodes
     and/or property; parameterized throughout."""
-    where, params = [f"tr.HRETENTIONACCT IN ({_ACCT_LIST})", "tr.STOTALAMOUNT < 0"], []
+    where, params = [f"tr.HRETENTIONACCT IN ({_ACCT_LIST})", "tr.STOTALAMOUNT < 0",
+                     "ISNULL(tr.VOID, 0) = 0", "ISNULL(tr.VOIDED, 0) = 0"], []
     pids = ",".join(str(int(p)) for p in data.DEFAULT_PROPERTY_IDS)
     where.append(f"t.HPROPERTY IN ({pids})")
     if scodes:
@@ -96,7 +97,8 @@ def for_scodes(scodes: list[str], since: str | None = None,
 def _totals(scode: str | None, property_id: int | None, since: str | None) -> dict:
     """Uncapped per-account aggregate over the SAME filters as the event list — totals
     must never depend on the display `limit`."""
-    where, params = [f"tr.HRETENTIONACCT IN ({_ACCT_LIST})", "tr.STOTALAMOUNT < 0"], []
+    where, params = [f"tr.HRETENTIONACCT IN ({_ACCT_LIST})", "tr.STOTALAMOUNT < 0",
+                     "ISNULL(tr.VOID, 0) = 0", "ISNULL(tr.VOIDED, 0) = 0"], []
     pids = ",".join(str(int(p)) for p in data.DEFAULT_PROPERTY_IDS)
     where.append(f"t.HPROPERTY IN ({pids})")
     if scode:
