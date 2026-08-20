@@ -14,6 +14,7 @@ Endpoints:
   GET  /multifamily/cohorts                 resident-cohort catalog with live churn performance
   GET  /multifamily/cohort-report           one cohort: stats + top at-risk members + summary
   GET  /multifamily/persuadables            edge residents: on-the-fence list + why + economics
+  GET  /multifamily/unit-economics          per-bedroom turnover cost/rate ledger (Phase 1)
   GET  /multifamily/edge-list               STABLE fight-for roster (hysteresis) + watch band
   GET  /multifamily/incentives              concession history (TRANS) + logged offers
   GET  /marketing/space-demand              per-cohort "who needs space" rollup (spacedemand bundle)
@@ -138,6 +139,23 @@ def mf_cohorts(properties: str | None = None, as_of: str | None = None,
     return clean(mf_cohorts_mod.catalog(pids, as_of))
 
 
+@app.get("/multifamily/unit-economics")
+def mf_unit_economics(properties: str | None = None, _=Depends(require_key)):
+    """The per-bedroom turnover-economics LEDGER (Phase 1 decision ledger): what one
+    turn costs (vacancy months x in-place rent + make-ready, gross and net of the
+    re-lease premium), how often units turn (occupied-unit-year denominators), and the
+    expected loss per unit-year — per bedroom, per property. Make-ready is GL-measured
+    where the property's ledger carries the U= unit-note convention (62W today) and a
+    labeled flat fallback elsewhere. Assumption-free by construction: no model score,
+    no uplift, no flip rate. Derivation: docs/PHASE0_DISCOVERY_62W_2026-08-18.md."""
+    from contracts.multifamily_churn import unit_economics as ue
+    pids = [int(x) for x in properties.split(",") if x.strip()] if properties else None
+    try:
+        return clean(ue.build(pids))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.get("/multifamily/persuadables")
 def mf_persuadables(properties: str | None = None, as_of: str | None = None,
                     band_low: float = 0.20, band_high: float = 0.60,
@@ -253,7 +271,19 @@ class OutreachRecord(BaseModel):
     month: str | None = None
     churn_probability: float | None = None
     risk_tier: str | None = None
-    incentive_cost: float | None = None   # offered concession $ (incentive_* actions)
+    incentive_cost: float | None = None   # expected $ if consumed (incentive_* actions)
+    # typed-offer fields (Phase 0 measurement discipline) — offer_type is REQUIRED for
+    # incentive_* actions; see contracts/multifamily_churn/outreach.py OFFER_TYPES
+    offer_type: str | None = None         # free_months_1/2/3 | free_garage_new |
+                                          # free_garage_waiver | rent_discount_pct |
+                                          # post_notice_rescue_1mo | other
+    offer_structure: str | None = None    # one_time_credit | recurring_discount_term |
+                                          # recurring_discount_base | waiver
+    offer_value: float | None = None      # months / pct / $ per the offer_type
+    property_id: int | None = None
+    bedroom: int | None = None
+    arm: str | None = None                # treated | control (randomized trials)
+    posting_account: int | None = None    # TRANS HRETENTIONACCT the credit posts to
 
 
 @app.post("/multifamily/outreach")

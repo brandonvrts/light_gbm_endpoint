@@ -308,6 +308,71 @@ def test_outreach_incentive_actions():
     assert {"incentive_offered", "incentive_accepted", "incentive_declined"} <= outreach._ACTIONS
 
 
+def test_outreach_typed_offers():
+    """incentive_* events REQUIRE a typed offer (the per-offer flip-rate denominator);
+    junk types/structures/arms are rejected; a full typed offer round-trips."""
+    import tempfile
+    from pathlib import Path
+    from contracts.multifamily_churn import outreach
+    orig = outreach._STORE
+    try:
+        outreach._STORE = Path(tempfile.mkdtemp()) / "outreach_test.jsonl"
+        for bad_kwargs in (dict(),                                   # missing offer_type
+                           dict(offer_type="one_month_off"),         # unknown type
+                           dict(offer_type="free_months_1", offer_structure="magic"),
+                           dict(offer_type="free_months_1", arm="placebo")):
+            try:
+                outreach.record("t0000001", "incentive_offered", **bad_kwargs)
+                assert False, f"should have raised: {bad_kwargs}"
+            except ValueError:
+                pass
+        rec = outreach.record("t0000001", "incentive_offered",
+                              offer_type="free_months_1",
+                              offer_structure="one_time_credit", offer_value=1.0,
+                              incentive_cost=1668.0, property_id=82, bedroom=2,
+                              arm="treated", posting_account=53)
+        assert rec["offer_type"] == "free_months_1" and rec["arm"] == "treated"
+        assert rec["posting_account"] == 53
+        # non-incentive actions stay permissive (no typed offer needed)
+        assert outreach.record("t0000001", "called")["action"] == "called"
+        evs = outreach._read()
+        assert len(evs) == 2 and evs[0]["offer_type"] == "free_months_1"
+    finally:
+        outreach._STORE = orig
+
+
+def test_unit_economics_ledger():
+    """The Phase 1 decision ledger: per-bedroom turnover economics must be
+    assumption-free, method-labeled, and internally coherent."""
+    if not _db_ok():
+        raise Skip("no DB")
+    from contracts.multifamily_churn import unit_economics as ue
+    out = ue.build([82])
+    assert out["view"] == "unit-economics" and len(out["properties"]) == 1
+    p = out["properties"][0]
+    # 62W is the property whose GL carries the U= convention — must be measured
+    assert p["make_ready_source"]["measured"] is True
+    assert p["make_ready_source"]["gl_coverage"] > 0.9
+    beds = {b["bedrooms"]: b for b in p["bedrooms"]}
+    assert set(beds) >= {1, 2}, f"bedroom classes missing: {sorted(beds)}"
+    for b in p["bedrooms"]:
+        if b["turnover_cost_gross"] is None:
+            continue
+        # gross = vacancy months x in-place rent + make-ready (rounding tolerance)
+        recon = b["vacancy_months"] * b["avg_inplace_rent"] + b["make_ready"]
+        assert abs(b["turnover_cost_gross"] - recon) < 2, (b["bedrooms"], recon)
+        # annual = turns/window x net
+        if b["annual_turn_cost"] is not None:
+            assert abs(b["annual_turn_cost"]
+                       - b["turns_window"] / out["window_years"] * b["turnover_cost_net"]) < 2
+        # rate uses occupied unit-years, which can never exceed units x window
+        if b["occupied_unit_years"] is not None:
+            assert b["occupied_unit_years"] <= b["units"] * out["window_years"] + 0.1
+        assert b["make_ready_method"]
+    assert p["annual_turn_cost_total"] > 0
+    assert "no_assumptions" in out["methods"]
+
+
 def test_incentive_accounts_registry():
     """The 8 landlord concession accounts, and never the subsidy account (40 = income)."""
     from contracts.multifamily_churn import incentives
