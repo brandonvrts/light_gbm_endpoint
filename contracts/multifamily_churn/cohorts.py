@@ -3,7 +3,7 @@
 A cohort is a predicate over the point-in-time feature frame of the ACTIVE population,
 scored with the deployed bundle via the exact serving path. "How will this cohort
 perform" = calibrated expected move-out share at each resident's NEXT lease decision
-(v6-roadmap-h60 horizon), so cohort aggregates are honest expected counts.
+(the serving bundle's horizon), so cohort aggregates are honest expected counts.
 
 The v1 catalog is data-validated (2026-07-21 analysis, 955 residents): rent-increase
 cohorts were tested and EXCLUDED (survivor bias — a 5%+ increase implies an already-

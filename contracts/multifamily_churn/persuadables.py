@@ -39,7 +39,7 @@ BAND_LOW, BAND_HIGH = 0.20, 0.60
 # The band is defined on the churn probability at the NEXT LEASE DECISION — that is
 # the 180-day renewal forecast, not the 60-day triage ranker the registry serves by
 # default. Pinned here so a default-bundle change can't silently empty the band.
-RENEWAL_BUNDLE = "v6-roadmap-h180"
+RENEWAL_BUNDLE = "v7-occupancy-h180"   # promoted 2026-09-25 (occupancy-filtered population)
 MAKE_READY_COST = 600.0
 FALLBACK_TURN_DAYS = 45.0
 _AVG_DAYS_PER_MONTH = 30.44

@@ -56,7 +56,7 @@ from contracts.multifamily_churn import (cohorts, contract, data, explain, persu
 
 BAND_LOW, BAND_HIGH = 0.20, 0.60
 DECISION_WINDOW_DAYS = 180
-RENEWAL_BUNDLE = persuadables.RENEWAL_BUNDLE          # v6-roadmap-h180
+RENEWAL_BUNDLE = persuadables.RENEWAL_BUNDLE          # v7-occupancy-h180 since 2026-09-25
 GARAGE_CHARGE_CODE = 17           # RENTABLEITEMSTYPE.HCHARGECODE for garage/parking types
 GARAGE_MONTHS_TO_RERENT = 2.0     # Phase 0 median at 62W — the vacant stall's opportunity horizon
 DISCOUNT_PCT = 5.0

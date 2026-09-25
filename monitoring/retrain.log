@@ -5,3 +5,5 @@
 {"ts": "2026-07-16T00:00:00", "contract": "signal_desk_brokerage", "action": "promote", "to": "v0.5-split-honest", "reason": "roadmap Phase 1: honest nested-grouped-CV two-head model (pipeline_momentum + cold_fit); hygienic censored label; distribution-based opportunity tiers"}
 {"ts": "2026-07-16T00:00:01", "contract": "signal_desk_dealwin", "action": "tombstone"}
 {"ts": "2026-07-16T00:00:02", "contract": "signal_desk_recency", "action": "tombstone"}
+2026-09-25T15:34:40-05:00 PROMOTE multifamily_churn v6-roadmap-h60 -> v7-occupancy-h60 (occupancy-status filter: TENANT.ISTATUS IN (0,1,2,3,4) removes canceled/denied applications that were ~50% of anchors; fair shared-window test 2026-01..04 expiring: AUC 0.895 vs 0.874, Brier 0.0733 vs 0.0754; wf-AUC 0.854 honest vs 0.905 phantom-inflated; OOT 22.5% pred vs 19.6% realized)
+2026-09-25T15:34:40-05:00 PROMOTE multifamily_churn renewal bundle v6-roadmap-h180 -> v7-occupancy-h180 (persuadables/concession-cohort pin; shared-window 2025-09..12 expiring: AUC 0.830 vs 0.828, Brier 0.1117 vs 0.1140; OOT 25.9% pred vs 25.7% realized; wf-AUC 0.718 honest vs 0.822 inflated)

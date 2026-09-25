@@ -3,7 +3,7 @@
 **Feature:** named resident cohorts over the churn model, plus the incentive-targeting
 surfaces built on them. Everything here is **live and deployed** (2026-07-22) and
 returns chatbot-safe `summary` sentences.
-**Model:** `v6-roadmap-h60` (calibrated LightGBM). "Perform" always means: **expected
+**Model:** `v7-occupancy-h60` (calibrated LightGBM; since 2026-09-25 — see `CHURN_REPORT_HANDOFF.md` §Model v7). The persuadables / edge / concession-cohort surfaces score on `v7-occupancy-h180`. "Perform" always means: **expected
 move-out risk at each resident's NEXT lease decision** (60-day horizon).
 Companion docs: `API_HANDOFF.md` (general), `CHURN_REPORT_HANDOFF.md` (monthly report
 the chatbot already uses).

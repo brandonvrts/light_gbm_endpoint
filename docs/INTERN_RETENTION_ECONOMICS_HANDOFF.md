@@ -1,6 +1,6 @@
 # Intern Handoff — Retention Economics & the Concession Decision
 
-**Date:** 2026-09-23, revised 2026-09-25 (endpoint + snapshots) · **Audience:** economics intern (NOI, cost-risk, trial design) · **Model/repo owner:** Brandon Valadez
+**Date:** 2026-09-23, revised 2026-09-25 (model v7, occupancy-filtered ledger, endpoint, snapshots) · **Audience:** economics intern (NOI, cost-risk, trial design) · **Model/repo owner:** Brandon Valadez
 **Companion docs (read in this order):** `PHASE0_DISCOVERY_62W_2026-08-18.md` (what history can and cannot tell us), `DESIGN_UNIT_ECONOMICS_CONCESSIONS_62W.md` (the original design; parts superseded), `MULTIFAMILY_COHORTS_HANDOFF.md` (the API you will call), and the research baseline in the vault (`outputs/multifamily-prediction/reports/2026-08-20-retention-decision-science-baseline.md`).
 
 > **Split of work.** You own the economics: turning churn probability, turnover rate and turnover cost into an NOI answer, a cost-risk analysis, and trial designs that can actually be measured. Brandon owns the model and this repo: scores, ledgers, logging, endpoints. §1 says exactly what crosses the boundary in each direction.
@@ -31,31 +31,31 @@
 
 | File | What it is |
 |---|---|
-| `concession-cohort-2026-09-25.csv` | the cohort, flattened — 150 residents, 133 columns |
+| `concession-cohort-2026-09-25.csv` | the cohort, flattened — 152 residents, 133 columns (model v7) |
 | `concession-cohort-2026-09-25.json` | the same call, nested, with `cohort` / `offers_summary` / `context` roll-ups |
-| `concession-cohort-top-p30-2026-09-25.csv` | `band_low=0.3` — the 34 residents the model is most sure about |
+| `concession-cohort-top-p30-2026-09-25.csv` | `band_low=0.3` — the 95 residents at p ≥ 0.30 (v7 places many at 0.30–0.31; see §1b) |
 | `unit-economics-2026-09-25.json` | the Phase 1 turnover ledger for all five properties (§2) |
 
 Keep these with your workbook; the live cohort moves as leases roll and scores refresh.
 
 **What the cohort looks like today (0.20–0.60, decision ≤ 180 days, no notice)**
 
-| | n | Expected move-outs | Expected loss | Rent at risk / mo |
+|  | n | Expected move-outs | Expected loss | Rent at risk / mo |
 |---|---|---|---|---|
-| **Portfolio** | **150** | **41.6** | **$107,566** | $54,732 |
-| Winwood | 63 | — | $31,327 | |
-| CCV | 41 | — | $23,184 | |
-| Sierra Pointe | 18 | — | $18,739 | |
-| 62W | 26 | 7.7 | $33,342 | |
-| Townhomes | 2 | — | $974 | |
-| 1BR / 2BR / 3BR | 72 / 77 / 1 | | $45,043 / $61,680 / $843 | |
+| **Portfolio** | **152** | **44.6** | **$118,653** | $59,190 |
+| Winwood | 66 | 18.7 | $35,008 | $24,059 |
+| CCV | 39 | 11.8 | $24,355 | $12,210 |
+| Sierra Pointe | 19 | 5.4 | $22,484 | $8,832 |
+| 62W | 26 | 8.1 | $35,399 | $13,396 |
+| CCV Townhomes | 2 | 0.5 | $1,407 | $693 |
+| 1BR / 2BR / 3BR | 69 / 81 / 2 | 20.6 / 23.3 / 0.6 | $46,263 / $70,528 / $1,862 |  |
 
 | Offer | Applicable | Cost if all renew | Median breakeven | Best case | Verdicts |
 |---|---|---|---|---|---|
-| One month free | 150 | $197,065 | 90.8pp | 30.2pp | 150 red |
-| 5% off (term-limited) | 150 | $118,239 | 36.8pp | 14.9pp | 1 amber, 149 red |
-| Garage — new assignment | 88 | $65,910 | 41.5pp | 12.7pp | 6 amber, 82 red |
-| Garage — waiver | 60 | $62,580 | 52.1pp | 12.5pp | 1 amber, 59 red |
+| One month free | 152 | $201,845 | 82.8pp | 27.7pp | 152 red |
+| 5% off (term-limited) | 152 | $121,107 | 34.3pp | 13.8pp | 1 amber, 151 red |
+| Garage — new assignment | 85 | $63,710 | 40.4pp | 12.5pp | 8 amber, 77 red |
+| Garage — waiver | 65 | $68,340 | 55.7pp | 11.6pp | 2 amber, 63 red |
 
 Nothing is green. That is the starting point, not a failure: it is what §0 predicts, and it is why the work in §6–§9 (multi-term horizon, post-notice, lease-end migration, trials) is where the answer lives.
 
@@ -76,10 +76,10 @@ where `Δ` is the uplift — the reduction in churn probability — we are willi
 
 | Situation | Verdict |
 |---|---|
-| **Pre-notice, one lease term, any property** | **No offer clears.** At `Δ = 10pp` a band resident (`p ≈ 0.26`) justifies spending ~12% of `TC_net`: **$607** on a 62W 2BR, **$223** on a Winwood 2BR. One free month ($1,065–2,332) and 5% off ($580–1,399) never fit. Only a new garage assignment at 62W/Sierra 2BR (~$750) is close, and only in the amber zone. |
-| **Post-notice** (resident has filed to leave, `p ≈ 0.97`) | **One free month is justified without new evidence.** Breakeven **1.5pp** at 62W 2BR, because almost no one who gets the offer would have renewed anyway — the "sleeping dog" cost that kills pre-notice offers vanishes. Worst case (offer does nothing): ~$49 per offer. This is trial #1. |
-| **Winwood / CCV / Townhomes** | Turns cost $1,800–2,100 (fast fills, low rent). **No concession pays on one term at any plausible uplift.** Their retention money is operational: vacancy tail and winter fill (§6). |
-| **62W / Sierra 2BR** | Turns cost $4,900–5,100. This is where the concession conversation is real — and still only for cheap offers, multi-term saves (§5.3), or offers that also buy something deterministic (lease-end migration, §6C). |
+| **Pre-notice, one lease term, any property** | **No offer clears.** At `Δ = 10pp` a band resident (`p ≈ 0.26`) justifies spending ~12% of `TC_net`: **$621** on a 62W 2BR, **$226** on a Winwood 2BR. One free month ($967–2,332) and 5% off ($580–1,399) never fit. Only a new garage assignment at 62W/Sierra 2BR (~$750) is close, and only in the amber zone. |
+| **Post-notice** (resident has filed to leave, `p ≈ 0.97`) | **One free month is justified without new evidence.** Breakeven **1.4pp** at 62W 2BR, because almost no one who gets the offer would have renewed anyway — the "sleeping dog" cost that kills pre-notice offers vanishes. Worst case (offer does nothing): ~$49 per offer. This is trial #1. |
+| **Winwood / CCV / Townhomes** | Turns cost $1,844–2,922 (fast fills, low rent). **No concession pays on one term at any plausible uplift.** Their retention money is operational: vacancy tail and winter fill (§6). |
+| **62W / Sierra 2BR** | Turns cost $5,025–5,220. This is where the concession conversation is real — and still only for cheap offers, multi-term saves (§5.3), or offers that also buy something deterministic (lease-end migration, §6C). |
 
 **So the "jump" from our numbers to a justification is not "the offer pays." It is one of three honest statements:** (1) *"this offer pays if it moves churn by ≥ Δ\* points — do we believe that?"*, (2) *"this offer pays because the population's p makes the wasted-spend term tiny"* (post-notice), or (3) *"this offer pays because it also buys a deterministic gain"* (lease-end migration). Anything else needs a trial first, and your job is to make those trials answerable.
 
@@ -128,7 +128,7 @@ curl -s -H "X-API-Key: rts-local-dev-key" \
 | `top` | all | trims the displayed rows only — `cohort` and `offers_summary` roll-ups always cover the whole cohort |
 | `format` | `json` | `csv` flattens nested blocks to dotted columns (`economics.offers.free_months_1.breakeven_uplift_pp`, `features.TenureMonths`, …) |
 
-**Why the default band is 0.20–0.60 and not 0.60–0.70.** "A 30–40% chance of staying" is a churn band of 0.60–0.70, and on this model it is **empty**: without a notice on file the h180 bundle never exceeds ~0.45 (no-notice 99th percentile 0.39 on 2026-09-25; one resident at 0.75). Notice is the dominant feature; once it is filed the probability jumps to ~0.95 and the resident belongs to the post-notice population (§6B), not this one. So the default is the persuadable band the rest of the API already uses — 0.20–0.60, ~150 residents with a decision inside 180 days, band mean p ≈ 0.26. `band_low=0.3` keeps the ~35 the model is most sure about. The response's `population` block always reports how many sat below/above the band and how many the window or notice filter removed, so you can see what a sweep is doing.
+**Why the default band is 0.20–0.60 and not 0.60–0.70.** "A 30–40% chance of staying" is a churn band of 0.60–0.70, and on this model it is **empty**: without a notice on file the h180 bundle never exceeds ~0.45 (v7, 2026-09-25: no-notice 99th percentile 0.38; one resident at 0.75). Notice is the dominant feature; once it is filed the probability jumps to ~0.95 and the resident belongs to the post-notice population (§6B), not this one. So the default is the persuadable band the rest of the API already uses — 0.20–0.60, **152 residents** with a decision inside 180 days, band mean p ≈ 0.29. One v7 quirk to know: the h180 calibrator has plateaus, so many residents share p ≈ 0.30–0.31 (`band_low=0.3` keeps 95); inside a plateau the ranking is a tie, the level is fine. The response's `population` block always reports how many sat below/above the band and how many the window or notice filter removed, so you can see what a sweep is doing.
 
 **What each row carries**
 
@@ -152,29 +152,35 @@ Top-level: `population` (scored / in-band / excluded-by-notice / excluded-by-win
 **Snapshot for reproducibility.** Pull the CSV once with an explicit `as_of` and keep it with your workbook; the live cohort moves as leases roll and scores refresh (the scored frame is cached one hour).
 
 
-## 2. The numbers you start with — live ledger, 2026-09-23
+## 2. The numbers you start with — ledger as of 2026-09-25, occupancy-filtered
 
 Trailing 4-year window. `TC_gross = vacancy_months × avg in-place rent + make-ready`. `TC_net = TC_gross − (relet premium − renewal increase we'd have taken) × rent × 12` — what a lost resident *actually* costs once we account for re-letting the unit at a different rent. **Use `TC_net` in every decision.** Turnover rate = turns ÷ occupied unit-years (per-unit interval union). Loss/unit-yr = rate × `TC_net`.
 
 | Property | BR | Units | Avg rent | Turns (4y) | Vac. days | Make-ready | TC gross | **TC net** | Turnover /unit-yr | Loss /unit-yr | Annual |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Winwood (26) | 1 | 216 | $1,178 | 312 | 41.2 | $600 † | $2,191 | **$1,795** | 0.373 | $670 | $140,010 |
-| Winwood (26) | 2 | 202 | $1,368 | 241 | 37.6 | $600 † | $2,283 | **$1,875** | 0.305 | $572 | $112,969 |
-| CCV (62) | 1 | 102 | $967 | 130 | 38.5 | $600 † | $1,818 | **$1,883** ‡ | 0.321 | $604 | $61,198 |
-| CCV (62) | 2 | 186 | $1,065 | 270 | 42.0 | $600 † | $2,069 | **$2,065** | 0.366 | $756 | $139,388 |
-| CCV (62) | 3 | 6 | $1,248 | 15 | 39.3 | $600 † | $2,210 | **$2,665** ‡ | 0.625 | $1,666 | $9,994 |
-| Sierra Pointe (72) | 1 | 46 | $1,465 | 68 | 38.3 | $600 † | $2,446 | **$2,347** | 0.380 | $892 | $39,899 |
-| Sierra Pointe (72) | 2 | 81 | $1,768 | 114 | **74.7** | $600 † | $4,932 | **$4,873** | 0.382 | $1,861 | $138,880 |
-| 62W (82) | 1 | 47 | $1,495 | 83 | 58.4 | $820 | $3,690 | **$3,538** | 0.474 | $1,677 | $73,414 |
-| 62W (82) | 2 | 84 | $1,817 | 137 | **72.8** | $899 | $5,241 | **$5,097** | 0.448 | $2,283 | $174,572 |
-| 62W (82) | 3 | 6 | $2,332 | 7 | 60.0 | $1,119 | $5,712 | **$5,865** | 0.295 | $1,730 | $10,264 |
-| CCV Townhomes (473) | 2 | 16 | $1,379 | 15 | 41.8 | $600 † | $2,489 | **$1,957** | 0.238 | $466 | $7,339 |
-| **Portfolio** | | **992** | | **1,392** | | | | | | | **$907,927** |
+| Winwood (26) | 1 | 216 | $1,178 | 312 | 43.4 | $600 † | $2,285 | **$1,844** | 0.380 | $701 | $143,832 |
+| Winwood (26) | 2 | 202 | $1,367 | 250 | 39.7 | $600 † | $2,377 | **$1,897** | 0.323 | $613 | $118,562 |
+| CCV (62) | 1 | 102 | $967 | 140 | 47.0 | $600 † | $2,089 | **$1,889** | 0.359 | $678 | $66,115 |
+| CCV (62) | 2 | 186 | $1,065 | 287 | 48.7 | $600 † | $2,304 | **$2,090** | 0.411 | $859 | $149,958 |
+| CCV (62) | 3 | 6 | $1,248 | 16 | 53.2 | $600 † | $2,784 | **$2,922** ‡ | 0.748 | $2,186 | $11,688 |
+| Sierra Pointe (72) | 1 | 46 | $1,465 | 68 | 40.6 | $600 † | $2,564 | **$2,418** | 0.384 | $929 | $41,106 |
+| Sierra Pointe (72) | 2 | 81 | $1,768 | 115 | **77.3** | $600 † | $5,091 | **$5,025** | 0.395 | $1,985 | $144,469 |
+| 62W (82) | 1 | 47 | $1,495 | 83 | 59.0 | $820 | $3,720 | **$3,537** | 0.479 | $1,694 | $73,393 |
+| 62W (82) | 2 | 84 | $1,817 | 137 | **74.8** | $899 | $5,368 | **$5,220** | 0.460 | $2,401 | $178,785 |
+| 62W (82) | 3 | 6 | $2,332 | 7 | 61.1 | $1,119 | $5,806 | **$5,959** ‡ | 0.302 | $1,800 | $10,428 |
+| CCV Townhomes (473) | 2 | 16 | $1,379 | 15 | 59.5 | $600 † | $3,302 | **$2,787** | 0.244 | $680 | $10,451 |
+| **Portfolio** |  | **992** |  | **1,430** |  |  |  |  |  |  | **$948,787** |
 
 † **Fallback, unmeasured.** GL `U=<unit>` make-ready tagging exists only at 62W (99% coverage; Sierra 45%, others 0%). Three of four properties carry a flat $600 placeholder. Getting real per-turn make-ready for 26/62/72 is one of your first tasks (§9) — it changes `TC_net` there by hundreds of dollars.
-‡ `TC_net > TC_gross` at CCV 1BR/3BR: the re-let premium (4.1% / 1.7%) is *below* the renewal increase (4.7%), so losing the resident forgoes the larger increase — netting adds cost rather than subtracting it.
+‡ `TC_net > TC_gross` where the re-let premium is *below* the renewal increase we would have taken — CCV 3BR (re-let 3.8% vs renewal increase 4.69%); 62W 3BR (re-let 3.2% vs renewal increase 3.72%) — so losing the resident forgoes the larger increase and netting adds cost rather than subtracting it.
 
-**Read this table before anything else:** a 2BR turn costs **2.7× more at 62W than at Winwood**. Winwood fills in 38 days at $1,368; 62W takes 73 days at $1,817. Concession breakevens scale with `TC_net`, so the same offer is a completely different decision across the portfolio. Also: 1BR and 2BR at 62W turn at nearly the same rate (0.47 vs 0.45) — the 2BR cost concentration is mix and cost-per-turn, not worse behavior.
+**Read this table before anything else:** a 2BR turn costs **2.8× more at 62W than at Winwood**. Winwood fills in 40 days at $1,367; 62W takes 75 days at $1,817. Concession breakevens scale with `TC_net`, so the same offer is a completely different decision across the portfolio. Also: 1BR and 2BR at 62W turn at nearly the same rate (0.48 vs 0.46) — the 2BR cost concentration is mix and cost-per-turn, not worse behavior.
+
+## 2b. What changed on 2026-09-25 — model v7 and the occupancy filter
+
+If you compare this document with the Phase 0 memo (2026-08-18) or the research baseline (2026-08-20), several numbers moved. One root cause: `TENANT` rows with `ISTATUS 9` (application denied) and `7` (application canceled) carry a planned move-in date and never a move-out, so every population built from move-in/move-out dates — training anchors, the served resident list, the ledger's turn detection — admitted them as residents. They were ~50% of every training anchor (959 of 1,901 rows at 2024-06-30), 35 of the 950 scored scodes, and the bogus "next move-in" that truncated vacancy gaps (CCV: 87 of 415 turns).
+
+What was done: every population now filters `ISTATUS IN (0,1,2,3,4)` (occupancy statuses; `1` = past is kept because the status is *current* state); the ledger gained `as_of`; the churn model was retrained as **v7** on the clean population and promoted after a same-rows test on months neither model trained on (v7 ≥ v6 on every metric — `CHURN_REPORT_HANDOFF.md` §Model v7). Effects you will see: portfolio turnover cost $908k → **$948,787**/yr (CCV +$17k, the most contaminated property); CCV 2BR turnover 0.366 → 0.411 per unit-year; served population 950 → 923; `p` values shift a little (v7's h180 calibrator puts many residents at 0.30–0.31 — a plateau, not new information); cohort 150 → 152. Every table in this document is the 2026-09-25 cut on v7 and the filtered ledger; treat any earlier figure as superseded.
 
 ---
 
@@ -205,7 +211,7 @@ The first term is what we save; the second is what we pay to residents who would
 
 ### 3.3 Where `p` must come from (and three ways to get it wrong)
 
-1. **Use h180, not the serving default h60.** The band is defined on the renewal decision, a 180-day question. The h60 triage ranker compresses almost everyone below 0.20 (3 vs 18 band members at 62W — Phase 0 §4). `persuadables.py` pins `v6-roadmap-h180` for this reason.
+1. **Use h180, not the serving default h60.** The band is defined on the renewal decision, a 180-day question. The h60 triage ranker compresses almost everyone below 0.20 (3 vs 18 band members at 62W — Phase 0 §4). `persuadables.py` pins `v7-occupancy-h180` for this reason.
 2. **Use the calibrated model probability, never the display-capped `churn_probability` shown in the churn report** for any arithmetic (it is clipped to 0.10–0.75 for display). The persuadables/edge-list endpoints return usable probabilities.
 3. **Pre-notice only for the band; post-notice is a different population** (§6B) with its own base rate (2.7% renew after notice), not a model score.
 
@@ -226,7 +232,7 @@ This is a correlational routing heuristic, not causal truth — but it shrinks t
 
 `r` is not a decision input — `p` is, per resident. `r` does two other things:
 
-- **Sizes the prize.** Steady-state loss per unit-year `L = r × TC_net` (62W 2BR: 0.448 × $5,097 = $2,283; Winwood 2BR: $572). Summed over units it is the "annual" column — the disease burden a program can address a slice of.
+- **Sizes the prize.** Steady-state loss per unit-year `L = r × TC_net` (62W 2BR: 0.460 × $5,220 = $2,401; Winwood 2BR: $613). Summed over units it is the "annual" column — the disease burden a program can address a slice of.
 - **Is the baseline any program will be judged against** — and pre/post comparisons of `r` are confounded by season and market regime (Phase 0 §12.2). Only randomization moves `r` attributably. Track `r` monthly (§8) so you know the baseline is drifting *before* a program starts.
 
 ---
@@ -252,54 +258,54 @@ Read: **green ≤ 5pp** (inside what history plausibly supports) · **amber 5–
 
 | Property | BR | TC net | 1 free month `C` | `Δ*` @ p=.26 | @ p=.40 | 5% (0.6 mo) `C` | `Δ*` @ p=.26 | @ p=.40 |
 |---|---|---|---|---|---|---|---|---|
-| Winwood | 1 | $1,795 | $1,178 | 141 | 115 | $707 | 48 | 39 |
-| Winwood | 2 | $1,875 | $1,368 | 200 | 162 | $821 | 58 | 47 |
-| CCV | 1 | $1,883 | $967 | 78 | 63 | $580 | 33 | 27 |
-| CCV | 2 | $2,065 | $1,065 | 79 | 64 | $639 | 33 | 27 |
-| CCV | 3 | $2,665 | $1,248 | 65 | 53 | $749 | 29 | 23 |
-| Sierra Pointe | 1 | $2,347 | $1,465 | 123 | 100 | $879 | 44 | 36 |
-| Sierra Pointe | 2 | $4,873 | $1,768 | **42** | **34** | $1,061 | **21** | **17** |
-| 62W | 1 | $3,538 | $1,495 | 54 | 44 | $897 | 25 | 20 |
-| 62W | 2 | $5,097 | $1,817 | **41** | **33** | $1,090 | **20** | **16** |
-| 62W | 3 | $5,865 | $2,332 | 49 | 40 | $1,399 | 23 | 19 |
-| CCV Townhomes | 2 | $1,957 | $1,379 | 177 | 143 | $827 | 54 | 44 |
+| Winwood | 1 | $1,844 | $1,178 | 131 | 106 | $707 | 46 | 37 |
+| Winwood | 2 | $1,897 | $1,367 | 191 | 155 | $820 | 56 | 46 |
+| CCV | 1 | $1,889 | $967 | 78 | 63 | $580 | 33 | 27 |
+| CCV | 2 | $2,090 | $1,065 | 77 | 62 | $639 | 33 | 26 |
+| CCV | 3 | $2,922 | $1,248 | 55 | 45 | $749 | 25 | 21 |
+| Sierra Pointe | 1 | $2,418 | $1,465 | 114 | 92 | $879 | 42 | 34 |
+| Sierra Pointe | 2 | $5,025 | $1,768 | **40** | **33** | $1,061 | **20** | **16** |
+| 62W | 1 | $3,537 | $1,495 | 54 | 44 | $897 | 25 | 20 |
+| 62W | 2 | $5,220 | $1,817 | **40** | **32** | $1,090 | **20** | **16** |
+| 62W | 3 | $5,959 | $2,332 | 48 | 39 | $1,399 | 23 | 18 |
+| CCV Townhomes | 2 | $2,787 | $1,379 | 72 | 59 | $827 | 31 | 25 |
 
-Everything is red. The best case in the whole portfolio — 5% off at 62W/Sierra 2BR for a `p = 0.40` resident — needs 16–17 points of uplift; history's leakage-free estimate is +10–12 with a CI that includes zero.
+Everything is red. The best case in the whole portfolio — 5% off at 62W/Sierra 2BR for a `p = 0.40` resident — needs ~16 points of uplift; history's leakage-free estimate is +10–12 with a CI that includes zero.
 
 ### 5.2 Max justified spend `C_max` per resident
 
 | Property | BR | TC net | Δ=5pp, p=.26 | Δ=10pp, p=.26 | Δ=10pp, p=.40 | **Post-notice** Δ=10pp |
 |---|---|---|---|---|---|---|
-| Winwood | 1 | $1,795 | $114 | $214 | $256 | $1,381 |
-| Winwood | 2 | $1,875 | $119 | $223 | $268 | $1,442 |
-| CCV | 1 | $1,883 | $119 | $224 | $269 | $1,448 |
-| CCV | 2 | $2,065 | $131 | $246 | $295 | $1,588 |
-| CCV | 3 | $2,665 | $169 | $317 | $381 | $2,050 |
-| Sierra Pointe | 1 | $2,347 | $149 | $279 | $335 | $1,805 |
-| Sierra Pointe | 2 | $4,873 | $308 | $580 | $696 | $3,748 |
-| 62W | 1 | $3,538 | $224 | $421 | $505 | $2,722 |
-| 62W | 2 | $5,097 | $323 | **$607** | **$728** | **$3,921** |
-| 62W | 3 | $5,865 | $371 | $698 | $838 | $4,512 |
-| CCV Townhomes | 2 | $1,957 | $124 | $233 | $280 | $1,505 |
+| Winwood | 1 | $1,844 | $117 | $220 | $263 | $1,418 |
+| Winwood | 2 | $1,897 | $120 | $226 | $271 | $1,459 |
+| CCV | 1 | $1,889 | $120 | $225 | $270 | $1,453 |
+| CCV | 2 | $2,090 | $132 | $249 | $299 | $1,608 |
+| CCV | 3 | $2,922 | $185 | $348 | $417 | $2,248 |
+| Sierra Pointe | 1 | $2,418 | $153 | $288 | $345 | $1,860 |
+| Sierra Pointe | 2 | $5,025 | $318 | $598 | $718 | $3,865 |
+| 62W | 1 | $3,537 | $224 | $421 | $505 | $2,721 |
+| 62W | 2 | $5,220 | $330 | **$621** | **$746** | **$4,015** |
+| 62W | 3 | $5,959 | $377 | $709 | $851 | $4,584 |
+| CCV Townhomes | 2 | $2,787 | $176 | $332 | $398 | $2,144 |
 
-This is the table to hand a PM: *"for this resident, at the uplift we're willing to assume, you may spend up to $X."* Pre-notice at 10pp, the only offer under any `C_max` is a new $75-tier garage at 62W/Sierra 2BR. Post-notice, a free month fits everywhere except Winwood 1BR / CCV 1BR (and fits there too at Δ ≥ 12pp).
+This is the table to hand a PM: *"for this resident, at the uplift we're willing to assume, you may spend up to $X."* Pre-notice at 10pp, the only offer under any `C_max` is a new $75-tier garage at 62W/Sierra 2BR. Post-notice, a free month fits under `C_max` at 10pp at every property and bedroom.
 
 ### 5.3 62W garage variants, and the multi-term horizon
 
 | 62W 2BR, p=.26 | `C` | `Δ*` |
 |---|---|---|
-| Garage new, $75 tier, E[T]=2 mo | $750 | **12.8pp** (amber) |
-| Garage new, $100 tier | $1,000 | 18.1pp |
-| Garage waiver | $1,044 | 19.1pp |
+| Garage new, $75 tier, E[T]=2 mo | $750 | **12.4pp** (amber) |
+| Garage new, $100 tier | $1,000 | 17.5pp |
+| Garage waiver | $1,044 | 18.5pp |
 
 If a save retains `k` lease terms instead of one, breakevens divide by roughly `k` (62W 2BR, p=.26):
 
 | `k` | 1 free month | 5% / 0.6 mo | Garage new $750 |
 |---|---|---|---|
-| 1 | 41.0 | 20.1 | 12.8 |
-| 1.5 | 23.1 | 12.3 | 8.0 |
-| **2** | **16.1** | **8.9** | **5.9** |
-| 3 | 10.0 | 5.7 | 3.8 |
+| 1 | 39.5 | 19.5 | 12.4 |
+| 1.5 | 22.4 | 12.0 | 7.8 |
+| **2** | **15.6** | **8.6** | **5.7** |
+| 3 | 9.7 | 5.5 | 3.7 |
 
 At `k = 2` the cheap offers land inside the historically plausible range. The duration model (`bundles/multifamily_duration/v0.1`, backtest MAE 2.1 months, Spearman 0.90, **internal/report-only**) is what would supply `k` per resident. **Validating it costs nothing in concessions and may change every verdict** — see §9, week 5+.
 
@@ -307,32 +313,32 @@ At `k = 2` the cheap offers land inside the historically plausible range. The du
 
 62W 2BR, one free month (`C = $1,817`), base renewal after notice **2.7%** (`p = 0.973`, from 480 notices at 62W):
 
-- `Δ* = (1 − 0.973) × 1,817 / (5,097 − 1,817) = 0.027 × 1,817 / 3,280 = 1.5pp`
-- `E[net]` at `Δ = 10pp`: `0.10 × 5,097 − 0.127 × 1,817 = +$279` per offer; at `Δ = 17pp` (the historical 3-of-15 hint): `+$509`
+- `Δ* = (1 − 0.973) × 1,817 / (5,220 − 1,817) = 0.027 × 1,817 / 3,403 = 1.4pp`
+- `E[net]` at `Δ = 10pp`: `0.10 × 5,220 − 0.127 × 1,817 = +$291` per offer; at `Δ = 17pp` (the historical 3-of-15 hint): `+$529`
 - Worst case (`Δ = 0`): `0.027 × $1,817 ≈ $49` per offer — the credit is consumed only by the 2.7% who renew anyway
 
 The economics flip because `(1 − p)` collapses. No model is needed to find these residents — notice self-identifies them — which also makes this the cleanest governance shape available (uniform offer, self-identified group, randomized only for measurement).
 
 ### 5.5 One row, end to end — `t0018814` (62W, unit 236)
 
-From the attached CSV (2026-09-25): 2BR, in-place rent **$1,900** (= market), moved in 2026-08-15 on a 7-month term ending 2027-03-15 (**171 days** out), tenure 1.3 months, no notice. Rents one garage stall at **$100/mo**. Cohort memberships: `first-year` (risk, lift 1.29). Model: `p = 0.3819` — *"driven by the lease ends in 171 days, a 212-day planned lease, rent level ($1,900), short tenure; offset by no move-out notice on file."* No prior concessions, no logged offers. Duration model (internal): 6.2 expected remaining months, stayer-trait 6.5.
+From the attached CSV (2026-09-25, model v7): 2BR, in-place rent **$1,900** (= market), moved in 2026-08-15 on a 7-month term ending 2027-03-15 (**171 days** out), tenure 1.3 months, no notice. Rents one garage stall at **$100/mo**. Cohort memberships: `first-year` (risk, lift 1.29). Model: `p = 0.3283` — *"Driven by the lease ends in 171 days, a 212-day planned lease, short tenure (0.1 years), short tenure (1 months), a 7-month lease term; offset by rent level ($1,900) and no move-out notice on file."* No prior concessions, no logged offers. Duration model (internal): 6.2 expected remaining months, stayer-trait 6.5.
 
-Ledger for 62W 2BR: `TC_net = $5,120` (measured make-ready; the 2026-09-25 pull — §2's $5,097 is the 09-23 cut, see §12). So:
+Ledger for 62W 2BR: `TC_net = $5,220` (measured make-ready; occupancy-filtered ledger, as_of 2026-09-25). So:
 
 ```
-expected_loss = 0.3819 × 5,120                       = $1,955
-C_max @ 5pp   = 0.05 × 5,120 / (1 − 0.3819 + 0.05)   = $383
-C_max @ 10pp  = 0.10 × 5,120 / 0.7181                = $713
-C_max @ 15pp  = 0.15 × 5,120 / 0.7681                = $1,000
+expected_loss = 0.3283 × 5,220                       = $1,713
+C_max @ 5pp  = 0.05 × 5,220 / (1 − 0.3283 + 0.05)   = $362
+C_max @ 10pp  = 0.10 × 5,220 / (1 − 0.3283 + 0.10)   = $676
+C_max @ 15pp  = 0.15 × 5,220 / (1 − 0.3283 + 0.15)   = $953
 
-one month free       C = 1,900   Δ* = 0.6181 × 1,900 / (5,120 − 1,900) = 36.5pp   red
-5% off, term-limited C = 1,140   Δ* = 0.6181 × 1,140 / 3,980            = 17.7pp   red
+one month free       C = 1,900   Δ* = 0.6717 × 1,900 / (5,220 − 1,900) = 38.4pp   red
+5% off, term-limited C = 1,140   Δ* = 0.6717 × 1,140 / 4,080            = 18.8pp   red
                                  (baked into base, 3 yrs at 3.72%/yr:   $3,549)
 garage — new         n/a: already rents a stall
-garage — waiver      C = 1,200   Δ* = 0.6181 × 1,200 / 3,920            = 18.9pp   red
+garage — waiver      C = 1,200   Δ* = 0.6717 × 1,200 / 4,020            = 20.1pp   red
 ```
 
-Reading: at any uplift history can support (≤ 10pp) you may spend **$713** on this resident; the cheapest instrument costs $1,140. No offer clears. The three things that would change that, in order of cheapness: a second retained term (`k = 2` halves every breakeven — 5% off drops to ~9pp), a measured uplift above ~18pp from a trial, or a cheaper instrument (a $500 one-time credit has `Δ* = 0.6181 × 500 / 4,620 = 6.7pp` — amber). Note also *why* the model has him here: lease timing and tenure, not price or service. §3.4 says a concession is not obviously the right lever for a resident whose risk is "new and the lease is short" — a longer renewal term may do more than a credit.
+Reading: at any uplift history can support (≤ 10pp) you may spend **$676** on this resident; the cheapest instrument costs $1,140. No offer clears. The three things that would change that, in order of cheapness: a second retained term (`k = 2` halves every breakeven — 5% off drops to ~9pp), a measured uplift above ~19pp from a trial, or a cheaper instrument (a $500 one-time credit has `Δ* = 0.6717 × 500 / 4,720 = 7.1pp` — amber). Note also *why* the model has him here: lease timing and tenure, not price or service. §3.4 says a concession is not obviously the right lever for a resident whose risk is "new and the lease is short" — a longer renewal term may do more than a credit.
 
 
 ---
@@ -370,7 +376,7 @@ Arms: **12-mo standard / 15-mo term, no concession / 15-mo term + 1 free month**
 
 ```
 turns/yr        = turns_window / 4
-L_baseline      = turns/yr × TC_net            (= "Annual" in §2; portfolio $907,927)
+L_baseline      = turns/yr × TC_net            (= "Annual" in §2; portfolio $948,787)
 L per unit-year = r × TC_net
 ```
 
@@ -392,7 +398,7 @@ Second-order lines to carry separately: **face-rent effects** for rate discounts
 
 ### 7.3 The cost-risk grid
 
-Build one grid per property: rows = offers (§4), columns = `Δ ∈ {0, 5, 10, 15, 20pp}`, one sheet per population (§6). **The `Δ = 0` column is the budget at risk** — every dollar spent on residents who would have renewed anyway. Phase 0 §11.3 did this for 62W 2BR at p=.26 (3% discount: −$237 → +$375 across 5–20pp; one free month: −$1,076 → −$624 — negative everywhere). Reproduce it from the live ledger, extend to all properties and populations, and add the post-notice and migration sheets. Report the program **ceiling** (optimistic `Δ`, cheapest offer, full flow) next to the $908k disease burden so the burden stops being the anchor.
+Build one grid per property: rows = offers (§4), columns = `Δ ∈ {0, 5, 10, 15, 20pp}`, one sheet per population (§6). **The `Δ = 0` column is the budget at risk** — every dollar spent on residents who would have renewed anyway. Phase 0 §11.3 did this for 62W 2BR at p=.26 (3% discount: −$237 → +$375 across 5–20pp; one free month: −$1,076 → −$624 — negative everywhere). Reproduce it from the live ledger, extend to all properties and populations, and add the post-notice and migration sheets. Report the program **ceiling** (optimistic `Δ`, cheapest offer, full flow) next to the $949k disease burden so the burden stops being the anchor.
 
 ### 7.4 Sensitivities to run
 
@@ -406,7 +412,7 @@ Build one grid per property: rows = offers (§4), columns = `Δ ∈ {0, 5, 10, 1
 
 ## 8. Month over month — how we will know the numbers are holding
 
-**Model calibration (exists).** `monitoring/calibration.log` records predicted vs realized churn on each month's expiring cohort (h60 bundle). 2026 months run −1 to −5pp (slight, consistent under-prediction; healthy). Retro-scored pre-2026 months alert badly — trust contemporaneous months only. Brandon is adding h180 and the band's realized rate. **Your check each month:** does the persuadable band actually churn at ~26%? Does the edge roster's exit mix (renewed / notice / moved out / subsided) look like the band's `p` implies?
+**Model calibration (exists).** `monitoring/calibration.log` records predicted vs realized churn on each month's expiring cohort (the serving bundle — `v7-occupancy-h60` since 2026-09-25; earlier rows are v6). 2026 months run −1 to −5pp (slight, consistent under-prediction; healthy). Retro-scored pre-2026 months alert badly — trust contemporaneous months only. Brandon is adding h180 and the band's realized rate. **Your check each month:** does the persuadable band actually churn at ~26%? Does the edge roster's exit mix (renewed / notice / moved out / subsided) look like the band's `p` implies?
 
 **Economic calibration (build this).** From `/multifamily/churn-report?month=YYYY-MM` (per-resident outcome + month-start score) joined to the §2 ledger by property × bedroom:
 
@@ -436,7 +442,7 @@ Calibration in dollars weights errors by what they cost — a 2BR miss at 62W is
 
 | Weeks | You | Brandon (repo) | Depends on |
 |---|---|---|---|
-| **1–2** | **Reconcile notice flow** per property from `tenant_history` / `Lease_History` (the post-notice trial's denominator). **GL make-ready census** for Winwood/CCV/Sierra: which accounts, whether any unit attribution exists, per-turn medians. **Garage inventory** per property (`RENTABLEITEMS`, tiers, occupancy, attach rate). Reproduce §2 and §5 from the live ledger in a workbook. | Restart service so `/multifamily/unit-economics` is live; schedule the edge roster nightly; add h180 + band rows to the calibration log; month-start score snapshots. | DB read access for you (Brandon) |
+| **1–2** | **Reconcile notice flow** per property from `tenant_history` / `Lease_History` (the post-notice trial's denominator). **GL make-ready census** for Winwood/CCV/Sierra: which accounts, whether any unit attribution exists, per-turn medians. **Garage inventory** per property (`RENTABLEITEMS`, tiers, occupancy, attach rate). Reproduce §2 and §5 from the live ledger in a workbook. | Ledger `as_of` + occupancy filter and model v7 shipped 2026-09-25; schedule the edge roster nightly; add h180 + band rows to the calibration log; month-start score snapshots. | DB read access for you (Brandon) |
 | **3–4** | **NOI bridge + cost-risk grid** (§7) for all properties and populations. **Monthly realized turn-cost series** and economic calibration for 2026 (§8). Draft the **`C_max` policy memo**: what `Δ_believed` should be, by population, until trials report. | Season-conditional `TC_net` in the ledger; make `persuadables.py` consume the ledger (it still uses a flat $600 make-ready); expose the turn frame; `concession-decision` view per resident × offer (`C`, `Δ*`, `C_max`, class, driver routing, garage capacity check). | Weeks 1–2 make-ready + garage data |
 | **5–6** | **Pre-registered trial designs** for B (post-notice rescue) and C (Jan–Feb migration, three arms): eligibility rule, randomization by auditable rule, primary outcome (renewal), secondary (net NOI = saved turns × `TC_net` − consumed credits from TRANS), covariate-adjusted analysis on `p`, power at measured flows, stopping rules. **Governance packet** with Brandon: consistent-criteria doc, feature audit request, offer-handling scripts. | Decision register (monthly expiring cohort + pre-assigned arm + PM-filled offer/outcome) wired to the outreach log → TRANS `posting_account` → `Lease_History` outcome. | Notice flow; counsel review scheduled |
 | **ongoing** | **Duration-model validation for `k`** (§5.3) — the single cheapest thing that could change the verdicts. Cohort scorecard monthly. | Randomization + heterogeneous-effect readout by `p`-band once arms exist. | |
@@ -479,12 +485,13 @@ offer costs (if renewed, 12-mo): free month = rent · 5% term-limited = 0.6 × r
 
 ## 12. Reproducibility
 
-- Ledger: `GET /multifamily/unit-economics` (live; cached 24 h in-process). **The ledger has no `as_of` — its 4-year window trails the run date**, so it drifts a little every day. §2 and §5 were cut on 2026-09-23 (62W 2BR `TC_net` $5,097; portfolio $907,927); the attached JSON and the cohort snapshot are the 2026-09-25 pull ($5,120; $911,803 — one more 2BR turn entered the window). Both are correct for their date; use the 09-25 figures with the attachments and expect §2/§5 to differ by < 1%.
+- Ledger: `GET /multifamily/unit-economics?as_of=2026-09-25` — `as_of` pins the end of the 4-year window (turns, occupancy, renewal increases, GL), so every number in §2/§5 and the attached `unit-economics-2026-09-25.json` reproduce exactly; unit mix and in-place rent are always current state. Turns count occupancy statuses only (`TENANT.ISTATUS IN (0,1,2,3,4)` — see §2b).
 - Ops levers: `.venv/bin/python scripts/audit_ops_levers.py` (read-only; prints tail, seasonality, lease-end exposure per property).
 - Phase 0 numbers: `scripts/eval_phase0.py`; design + memo in `docs/`.
 - Band flow and power math: Phase 0 memo §11.1–11.2.
 - Offer logging contract: `contracts/multifamily_churn/outreach.py` (`OFFER_TYPES`, `OFFER_STRUCTURES`); `POST /multifamily/outreach`.
 - Frozen snapshots (this handoff's attachments): vault `outputs/multifamily-prediction/datasets/concession-cohort-2026-09-25.{csv,json}`, `concession-cohort-top-p30-2026-09-25.csv`, `unit-economics-2026-09-25.json` — regenerate with the same `as_of=2026-09-25` to diff against.
+- Model: `p` comes from `v7-occupancy-h180`; the serving default is `v7-occupancy-h60` (both 2026-09-25). What changed and the v6-vs-v7 same-rows comparison: `CHURN_REPORT_HANDOFF.md` §Model v7.
 - Concession cohort module + tests: `contracts/multifamily_churn/concession_cohort.py`; `tests/test_smoke.py::test_concession_offer_economics_offline` pins the offer math with no DB.
 
 **Questions:** Brandon Valadez (valadez.brandon@realtyts.com)

@@ -232,6 +232,46 @@ the corrected point-in-time SQL now embedded in `scripts/train_multifamily_v5.py
 
 ---
 
+## Model v7 (`v7-occupancy-h60` serving, `v7-occupancy-h180` renewal pin) — deployed 2026-09-25
+
+**What changed: the population, not the features.** A 2026-09-25 audit found that `TENANT`
+rows with `ISTATUS 9` (Application Denied) and `7` (Application Canceled) carry a planned
+`DTMOVEIN` and never a `DTMOVEOUT`, so every `DTMOVEIN`/`DTMOVEOUT` eligibility filter admitted
+them as residents. They were ~50% of every v6 training anchor (959 of 1,901 rows at
+2024-06-30), 100% of the `HasLeaseRecord = 0` rows v6 chose to keep, and 35 of the 950
+scodes the service scored (8 of them displacing the unit's real resident). v7 trains and
+serves on occupancy statuses only (`data.OCC_SQL = "ISTATUS IN (0,1,2,3,4)"`); features,
+labels, calibration method and tier policy are unchanged. Same trainer
+(`scripts/train_multifamily_v6.py`, `GBME_BUNDLE_VERSION=v7-occupancy-h{60,180}`).
+
+**Headline numbers moved because the phantoms were trivially separable never-churners.**
+v6's walk-forward AUC was inflated by ranking denied applicants below real residents; the
+honest v7 number is lower on paper and better in fact. The fair test is both bundles on the
+same real-resident rows in months neither base model trained on:
+
+| | v6 | v7 |
+|---|---|---|
+| **h60**, shared unseen 2026-01..04, expiring-soon (n=690, realized 17.4%) | AUC 0.874 · PR-AUC 0.727 · Brier 0.0754 | **AUC 0.895 · PR-AUC 0.754 · Brier 0.0733** |
+| h60, same window, all real residents (n=3,655, realized 5.4%) | AUC 0.914 · Brier 0.0287 | **AUC 0.922 · Brier 0.0281** |
+| **h180**, shared unseen 2025-09..12, expiring-soon (n=235, realized 26.4%) | AUC 0.828 · PR-AUC 0.763 · Brier 0.1140 | **AUC 0.830 · PR-AUC 0.765 · Brier 0.1117** |
+| h180, same window, all real residents (n=3,711, realized 13.2%) | AUC 0.793 · Brier 0.0920 | **AUC 0.802 · Brier 0.0913** |
+| h60 walk-forward AUC (13 folds) | 0.905 ± 0.026 *(phantom-inflated)* | 0.854 ± 0.025 |
+| h180 walk-forward AUC | 0.822 ± 0.061 *(phantom-inflated)* | 0.718 ± 0.040 |
+| h60 OOT expiring cohort: predicted vs realized | 20.5% vs 18.3% (AUC 0.863) | 22.5% vs 19.6% (AUC 0.891) |
+| h180 OOT expiring cohort: predicted vs realized | 26.9% vs 27.5% (AUC 0.859) | 25.9% vs 25.7% (AUC 0.808) |
+| h60 high tier (top ~22% of an expiring cohort) | 67% recall @ 56% realized churn | **70.5% recall @ 63% realized churn** |
+| Training base rate / samples | 3.1% / 98,008 (h60) · 9.2% / 90,079 (h180) | 6.2% / 50,698 · 18.2% / 47,036 |
+| `HasLeaseRecord = 1` share | ~75% | 99.7% |
+
+**Serving population:** 923 scodes (`ISTATUS` 0: 901, 2: 1, 3: 1, 4: 20) — was 950 with 35
+application records.
+
+**Things to know**
+- Anyone quoting v6's 0.905 / 0.822 walk-forward AUCs should stop; the honest comparables are the shared-window rows above.
+- The h180 calibrator has visible plateaus (many residents share p ≈ 0.085–0.087 and ≈ 0.30) — isotonic flattening on a smaller training set. Ranking inside a plateau is a tie; economics that use `p` as a level are unaffected. Follow-up: knot count / bin size in `calibration.SplineCalibrator`.
+- The turnover ledger (`/multifamily/unit-economics`) got the same filter plus `as_of`; portfolio annual turn cost rose from $908k to $949k (CCV +$17k) because application records had been truncating vacancy gaps.
+- `monitoring/calibration.log` continues on the serving default, now v7 h60; the first v7 row lands 2026-10-01.
+
 ## Model v6 (`v6-roadmap-h60`) — deployed 2026-07-15
 
 v6 implements the full audit roadmap (Phases 0–3). It is a strict upgrade over
