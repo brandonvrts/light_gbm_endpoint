@@ -235,7 +235,7 @@ This is a correlational routing heuristic, not causal truth — but it shrinks t
 
 | Offer | `C` if renewed (12-mo term) | Structure | What to know |
 |---|---|---|---|
-| **Free garage — new assignment** (resident does not have one) | `(12 − E[months to re-rent]) × tier rent` → **$750** ($75 tier) / **$1,000** ($100 tier) at 62W with `E[T] = 2 mo` | waiver; face rent preserved; non-compounding | Cheapest lever. **Capacity-capped**: 62W has 137 stalls, 93% mean occupancy, 4–6 free in winter, ~21 in the trough; 77% of residents already rent one, so this applies to a minority. Inventory, tiers and occupancy at the other four properties are **unknown** → your task (`RENTABLEITEMS` + `RentableItems_Status`). |
+| **Free garage — new assignment** (resident does not have one) | `(12 − E[months to re-rent]) × tier rent` → **$750** ($75 tier) / **$1,000** ($100 tier) at 62W with `E[T] = 2 mo` | waiver; face rent preserved; non-compounding | Cheapest lever. **Capacity-capped**: 62W has 137 stalls, 93% mean occupancy, 4–6 free in winter, ~21 in the trough; 77% of residents already rent one, so this applies to a minority. The endpoint reads inventory, vacant stalls and tier rents **live from `RENTABLEITEMS` at every property** (2026-09-25: Winwood 244 stalls / 18 vacant / $75; CCV 79 / 3 / $70; Sierra 129 / 30 / $75–100 incl. underground; 62W 137 / 20 / $75–100; Townhomes none) — but only 62W has been Phase-0-validated (seasonality, attach rate, stall-vs-payer counting). Validating the other three is your task (§9). |
 | **Free garage — waiver** (resident already rents one) | `12 × tier rent` ≈ **$1,044** (blended $87) | waiver | Full price, no occupancy offset — as expensive as a 5% discount with none of its downside protection. |
 | **One month free** | `1 × rent` — **$967–2,332** across the portfolio (§2) | one-time credit; face rent preserved | Cannot pay pre-notice on one term anywhere (§5.1). Justified **post-notice** (§5.4), plausibly at `k ≥ 2` terms (§5.3), or as the vehicle for lease-end migration (§6C). Post to acct **53** at the *new* term's start with the offer date recorded in the outreach log — that is what keeps TRANS joinable and defeats the posting-time tautology. |
 | **5% off rent** | if term-limited: `0.05 × 12 × rent = 0.6 months` — **$580–1,399**; if baked into base: compounds (≈ **$3,100 over 3 years** at 62W 2BR) | recurring discount, **term** or **base** | Same cash as 0.6 free months, worse structure: degrades face rent (loss-to-lease reporting, comps, appraisal/lender NOI reads) and, if removed at month 13, creates a **renewal cliff** that defers churn rather than removing it. **Default recommendation: offer the same dollars as a one-time credit.** Keep the rate form only as a trial arm testing whether *framing* ("lower rent") moves residents more than an equivalent credit — a behavioral question a trial can answer. |
@@ -317,7 +317,7 @@ The economics flip because `(1 − p)` collapses. No model is needed to find the
 
 From the attached CSV (2026-09-25): 2BR, in-place rent **$1,900** (= market), moved in 2026-08-15 on a 7-month term ending 2027-03-15 (**171 days** out), tenure 1.3 months, no notice. Rents one garage stall at **$100/mo**. Cohort memberships: `first-year` (risk, lift 1.29). Model: `p = 0.3819` — *"driven by the lease ends in 171 days, a 212-day planned lease, rent level ($1,900), short tenure; offset by no move-out notice on file."* No prior concessions, no logged offers. Duration model (internal): 6.2 expected remaining months, stayer-trait 6.5.
 
-Ledger for 62W 2BR: `TC_net = $5,120` (measured make-ready). So:
+Ledger for 62W 2BR: `TC_net = $5,120` (measured make-ready; the 2026-09-25 pull — §2's $5,097 is the 09-23 cut, see §12). So:
 
 ```
 expected_loss = 0.3819 × 5,120                       = $1,955
@@ -479,7 +479,7 @@ offer costs (if renewed, 12-mo): free month = rent · 5% term-limited = 0.6 × r
 
 ## 12. Reproducibility
 
-- Ledger: `GET /multifamily/unit-economics` (live; cached 24 h in-process) or `.venv/bin/python -c "from contracts.multifamily_churn import unit_economics as ue; import json; print(json.dumps(ue.build(), indent=1))"`. §2 table built 2026-09-23; the attached JSON is the 2026-09-25 pull (identical).
+- Ledger: `GET /multifamily/unit-economics` (live; cached 24 h in-process). **The ledger has no `as_of` — its 4-year window trails the run date**, so it drifts a little every day. §2 and §5 were cut on 2026-09-23 (62W 2BR `TC_net` $5,097; portfolio $907,927); the attached JSON and the cohort snapshot are the 2026-09-25 pull ($5,120; $911,803 — one more 2BR turn entered the window). Both are correct for their date; use the 09-25 figures with the attachments and expect §2/§5 to differ by < 1%.
 - Ops levers: `.venv/bin/python scripts/audit_ops_levers.py` (read-only; prints tail, seasonality, lease-end exposure per property).
 - Phase 0 numbers: `scripts/eval_phase0.py`; design + memo in `docs/`.
 - Band flow and power math: Phase 0 memo §11.1–11.2.
