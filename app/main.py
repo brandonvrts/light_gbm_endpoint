@@ -15,6 +15,7 @@ Endpoints:
   GET  /multifamily/cohort-report           one cohort: stats + top at-risk members + summary
   GET  /multifamily/persuadables            edge residents: on-the-fence list + why + economics
   GET  /multifamily/unit-economics          per-bedroom turnover cost/rate ledger (Phase 1)
+  GET  /multifamily/concession-cohort       intern surface: band residents + full data + offer breakevens
   GET  /multifamily/edge-list               STABLE fight-for roster (hysteresis) + watch band
   GET  /multifamily/incentives              concession history (TRANS) + logged offers
   GET  /marketing/space-demand              per-cohort "who needs space" rollup (spacedemand bundle)
@@ -181,6 +182,45 @@ def mf_persuadables(properties: str | None = None, as_of: str | None = None,
                                    flip_rate, top, month))
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@app.get("/multifamily/concession-cohort")
+def mf_concession_cohort(properties: str | None = None, as_of: str | None = None,
+                         band_low: float = 0.20, band_high: float = 0.60,
+                         decision_window_days: int | None = 180,
+                         include_notice: bool = False,
+                         assumed_uplift: float | None = None,
+                         garage_months_to_rerent: float = 2.0,
+                         top: int | None = None, format: str = "json",
+                         _=Depends(require_key)):
+    """The CONCESSION COHORT (economics-intern surface, 2026-09-25): residents whose
+    calibrated churn probability at the next lease decision sits in [band_low,
+    band_high) — default 0.20-0.60, the agreed persuadable band shared with
+    /persuadables and the edge roster (a 0.60-0.70 "30-40% chance of staying" band is
+    empty on this model: without a notice h180 never exceeds ~0.45; band_low=0.30 keeps
+    the top ~35) — scored on the h180 renewal bundle, with a decision inside `decision_window_days` (default 180;
+    omit for none) and no notice filed (include_notice=true to add them). Rows are
+    identifier-only (no names) and carry lease timing, rent (in-place/prior/market),
+    tenure, the h180 drivers, cohort memberships, garage status (RENTABLEITEMS), consumed
+    concessions + logged offers, INTERNAL duration estimates, the full model feature
+    vector, the per-bedroom turnover ledger (TC_net, rate, expected loss) and, per offer
+    (free month / 5% off / garage new / garage waiver), cost-if-renewed + breakeven
+    uplift + verdict. No uplift is assumed unless `assumed_uplift` (0-1) is passed, which
+    adds labeled scenario fields. `top` trims the displayed rows only (roll-ups are
+    always over the whole cohort). format=csv streams one flattened row per resident."""
+    from fastapi.responses import Response
+    from contracts.multifamily_churn import concession_cohort as cc
+    pids = [int(x) for x in properties.split(",") if x.strip()] if properties else None
+    try:
+        out = cc.build(pids, as_of, band_low, band_high, decision_window_days,
+                       include_notice, assumed_uplift, garage_months_to_rerent, top)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if (format or "json").strip().lower() == "csv":
+        return Response(content=cc.to_csv(out), media_type="text/csv",
+                        headers={"Content-Disposition":
+                                 f'attachment; filename="concession-cohort-{out["as_of"]}.csv"'})
+    return clean(out)
 
 
 @app.get("/multifamily/edge-list")

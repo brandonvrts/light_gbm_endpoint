@@ -197,6 +197,23 @@ this resident/property received?" directly.
 capture — after 2–3 renewal cycles this log replaces the assumed flip rate with a
 measured one.
 
+## 4. Concession cohort — the economics modeling surface (added 2026-09-25)
+
+`GET /multifamily/concession-cohort` — not a chatbot surface; built for the retention-economics
+intern. Returns every resident whose h180 churn probability sits in a band (default 0.20–0.60,
+the agreed persuadable band; `band_low=0.3` keeps the ~35 highest-risk)
+with a lease decision inside `decision_window_days` (180) and no notice, as identifier-only rows
+(no names) carrying lease/rent/tenure, the h180 drivers, cohort memberships, garage status,
+incentive history, INTERNAL duration estimates, the full 46-feature model input, the per-bedroom
+turnover ledger and, per offer (free month / 5% off / garage new / garage waiver), cost-if-renewed +
+breakeven uplift + verdict. `format=csv` for Excel; `assumed_uplift=0.10` adds labeled scenario
+fields. Full parameter and field reference: `INTERN_RETENTION_ECONOMICS_HANDOFF.md` §1b.
+
+```bash
+curl -s -H "X-API-Key: rts-local-dev-key" \
+  "http://10.1.6.17:8910/multifamily/concession-cohort?properties=82&format=csv"
+```
+
 ## Good to know
 
 - **Latency:** first call after a service restart scores the whole population (~30–60 s);

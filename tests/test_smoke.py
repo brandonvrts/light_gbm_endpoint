@@ -681,6 +681,110 @@ def test_spacedemand_bulk_scores_feed():
     assert dsm["count"] == ia["count"] > 0, "DSM/OMA aliases must resolve to IA/NE"
 
 
+def test_concession_offer_economics_offline():
+    """Pure offer math (no DB): costs, breakevens, C_max, applicability, scenario mode."""
+    from contracts.multifamily_churn import concession_cohort as cc
+    p, tc, rent = 0.65, 5097.0, 1817.0
+    e = cc.offer_economics(p, tc, rent, has_garage=False, garage_rent_monthly=0.0,
+                           vacant_stalls=20, vacant_avg_rent=86.25, renewal_increase_pct=3.72)
+    o = e["offers"]
+    assert abs(o["free_months_1"]["cost_if_renewed"] - rent) < 1
+    be = (1 - p) * rent / (tc - rent) * 100
+    assert abs(o["free_months_1"]["breakeven_uplift_pp"] - be) < 0.15
+    assert abs(o["rent_discount_5pct"]["cost_if_renewed"] - 0.6 * rent) < 1
+    assert o["rent_discount_5pct"]["cost_if_baked_into_base_3yr"] > o["rent_discount_5pct"]["cost_if_renewed"] * 2.9
+    assert o["free_garage_new"]["applicable"] and not o["free_garage_waiver"]["applicable"]
+    assert abs(o["free_garage_new"]["cost_if_renewed"] - (12 - 2) * 86.25) < 1
+    # cheaper offers never carry a higher breakeven
+    live = sorted((v["cost_if_renewed"], v["breakeven_uplift_pp"]) for v in o.values() if v["applicable"])
+    assert all(a[1] <= b[1] for a, b in zip(live, live[1:])), live
+    assert e["cheapest_breakeven_offer"] == "free_garage_new"
+    assert abs(e["c_max"]["at_10pp"] - 0.10 * tc / (1 - p + 0.10)) < 1
+    assert e["recommended_offer_at_assumed_uplift"] is None
+    # garage holder -> waiver applicable at 12 x their rent, new assignment not
+    g = cc.offer_economics(p, tc, rent, has_garage=True, garage_rent_monthly=100.0,
+                           vacant_stalls=20, vacant_avg_rent=86.25)
+    assert g["offers"]["free_garage_waiver"]["applicable"] and not g["offers"]["free_garage_new"]["applicable"]
+    assert abs(g["offers"]["free_garage_waiver"]["cost_if_renewed"] - 1200) < 1
+    # never: cost >= turnover cost
+    n = cc.offer_economics(p, 1500.0, rent, has_garage=False)
+    assert n["offers"]["free_months_1"]["verdict"] == "never"
+    assert n["offers"]["free_months_1"]["breakeven_uplift_pp"] is None
+    # post-notice-like p collapses the sleeping-dog term
+    pn = cc.offer_economics(0.973, tc, rent, has_garage=False)
+    assert pn["offers"]["free_months_1"]["breakeven_uplift_pp"] < 2.0
+    # scenario mode is labeled and arithmetically exact
+    s = cc.offer_economics(p, tc, rent, has_garage=False, assumed_uplift=0.10)
+    net = 0.10 * tc - (1 - p + 0.10) * rent
+    assert abs(s["offers"]["free_months_1"]["expected_net_at_assumed_uplift"] - net) < 1
+    assert s["recommended_offer_at_assumed_uplift"] in set(cc.OFFERS) | {"none"}
+    # bad inputs rejected at the view boundary
+    for kw in ({"band_low": 0.7, "band_high": 0.6}, {"assumed_uplift": 1.5},
+               {"decision_window_days": -1}, {"garage_months_to_rerent": 13}):
+        try:
+            cc.build([82], **kw)
+            raise AssertionError(f"accepted bad input {kw}")
+        except ValueError:
+            pass
+
+
+def test_concession_cohort_view():
+    """The intern surface: band + window + no-notice respected, identifier-only rows,
+    full feature vector, ledger-coherent economics, CSV round-trip."""
+    if not _db_ok():
+        raise Skip("no DB")
+    from contracts.multifamily_churn import concession_cohort as cc, data as mfd
+    # the agreed persuadable band (0.20-0.60) is the non-empty anchor for data checks;
+    # the default band (now also 0.20-0.60) is checked for SHAPE only on one property
+    out = cc.build(None, band_low=0.20, band_high=0.60, decision_window_days=180)
+    assert out["view"] == "concession-cohort" and out["model_version"].endswith("h180")
+    d = cc.build([82])
+    for k in ("n", "shown", "cohort", "offers_summary", "context", "members", "summary"):
+        assert k in d, f"default-band response missing {k}"
+    assert out["n"] == len(out["members"]) == out["shown"]
+    assert out["population"]["scored_n"] > 500
+    from core import registry as _reg
+    nfeat = len(_reg.load("multifamily_churn", cc.RENEWAL_BUNDLE)["feature_columns"])
+    for m in out["members"]:
+        assert "full_name" not in m and "name" not in m, "rows must be identifier-only"
+        assert 0.20 <= m["model"]["churn_probability"] < 0.60
+        assert m["lease"]["has_notice"] == 0
+        assert m["lease"]["days_to_lease_end"] is None or m["lease"]["days_to_lease_end"] <= 180
+        assert abs(m["model"]["stay_probability"] + m["model"]["churn_probability"] - 1) < 1e-6
+        assert len(m["features"]) == nfeat, (len(m["features"]), nfeat)
+        e = m["economics"]
+        if e["turnover_cost_net"]:
+            assert abs(e["expected_loss"] - m["model"]["churn_probability"] * e["turnover_cost_net"]) < 1
+            for k, o in e["offers"].items():
+                if o["applicable"] and o["breakeven_uplift_pp"] is not None:
+                    p, C, tc = m["model"]["churn_probability"], o["cost_if_renewed"], e["turnover_cost_net"]
+                    assert abs(o["breakeven_uplift_pp"] - (1 - p) * C / (tc - C) * 100) < 0.6, (k, o)
+                    assert "expected_net_at_assumed_uplift" not in o, "no uplift may be assumed by default"
+        assert (m["garage"]["has_garage"] is True) == (m["garage"]["stalls_n"] > 0)
+    # roll-ups cover the whole cohort even when top trims the display
+    t2 = cc.build(None, band_low=0.20, band_high=0.60, top=3)
+    assert t2["n"] == out["n"] and t2["shown"] == min(3, out["n"])
+    assert t2["cohort"]["n"] == out["cohort"]["n"]
+    # every property with garage inventory reports capacity; ledger context present
+    assert set(out["context"]["ledger"]) == set(mfd.DEFAULT_PROPERTY_IDS)
+    assert out["context"]["garage_capacity"][82]["stalls"] == 137
+    # scenario mode adds labeled fields only when asked
+    sc = cc.build([82], band_low=0.20, band_high=0.60, assumed_uplift=0.10, top=5)
+    assert "SCENARIO" in sc["assumptions"]["uplift"]
+    for m in sc["members"]:
+        for o in m["economics"]["offers"].values():
+            if o["applicable"]:
+                assert "expected_net_at_assumed_uplift" in o
+    # CSV: header + one line per shown member, flattened offer columns present
+    csv_text = cc.to_csv(out)
+    lines = csv_text.strip().splitlines()
+    assert len(lines) == out["shown"] + 1
+    assert "economics.offers.free_months_1.breakeven_uplift_pp" in lines[0]
+    assert "features.TenureMonths" in lines[0]
+    # a cohort must exist somewhere in the portfolio for the intern to work with
+    assert out["n"] > 0, out["summary"]
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = skipped = failed = 0
