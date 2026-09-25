@@ -327,7 +327,7 @@ Ledger for 62W 2BR: `TC_net = $5,220` (measured make-ready; occupancy-filtered l
 
 ```
 expected_loss = 0.3283 × 5,220                       = $1,713
-C_max @ 5pp  = 0.05 × 5,220 / (1 − 0.3283 + 0.05)   = $362
+C_max @ 5pp   = 0.05 × 5,220 / (1 − 0.3283 + 0.05)   = $362
 C_max @ 10pp  = 0.10 × 5,220 / (1 − 0.3283 + 0.10)   = $676
 C_max @ 15pp  = 0.15 × 5,220 / (1 − 0.3283 + 0.15)   = $953
 
