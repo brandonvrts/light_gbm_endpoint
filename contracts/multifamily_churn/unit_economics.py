@@ -57,9 +57,12 @@ POOL_ACCTS = ("52141005", "52520000", "52330000", "52340000", "55052000")
 _UNIT_NOTE = re.compile(r"^U=\s*([0-9A-Za-z]+)")
 
 
-def _turns_frame(pid: int) -> pd.DataFrame:
+def _turns_frame(pid: int, asof: str | None = None) -> pd.DataFrame:
     """Turn events (move-out -> next move-in on the same unit, gap 0-365d, move-out in
-    the trailing window), with bedroom, unit code, and same-unit relet rent delta."""
+    the trailing window ending at `asof`), with bedroom, unit code, and same-unit relet
+    rent delta. Only occupancy statuses (data.OCC_SQL): canceled/denied application rows
+    otherwise pose as the "next move-in" and truncate the vacancy (2026-09-25 audit)."""
+    asof = data._safe_asof(asof)
     df = db.query(f"""
         SELECT u.IBEDROOMS bed, LTRIM(RTRIM(u.SCODE)) ucode, g.DTMOVEOUT, g.next_in,
                g.gap, g.delta_pct
@@ -72,11 +75,11 @@ def _turns_frame(pid: int) -> pd.DataFrame:
                    (LEAD(t.SRENT) OVER (PARTITION BY t.HUNIT ORDER BY t.DTMOVEIN) - t.SRENT)
                      / NULLIF(t.SRENT, 0) * 100.0 END delta_pct
           FROM [{db.DB_YARDI}].dbo.TENANT t
-          WHERE t.HPROPERTY = ? AND t.DTMOVEIN IS NOT NULL
+          WHERE t.HPROPERTY = ? AND t.DTMOVEIN IS NOT NULL AND t.{data.OCC_SQL}
         ) g
         JOIN [{db.DB_YARDI}].dbo.UNIT u ON u.HMY = g.HUNIT
         WHERE g.gap BETWEEN 0 AND 365
-          AND g.DTMOVEOUT >= DATEADD(YEAR, -{WINDOW_YEARS}, GETDATE())
+          AND g.DTMOVEOUT >= DATEADD(YEAR, -{WINDOW_YEARS}, '{asof}') AND g.DTMOVEOUT <= '{asof}'
           AND u.EXCLUDE = 0 AND u.IBEDROOMS IS NOT NULL""", (pid,))
     if not df.empty:
         df["DTMOVEOUT"] = pd.to_datetime(df["DTMOVEOUT"])
@@ -85,7 +88,7 @@ def _turns_frame(pid: int) -> pd.DataFrame:
     return df
 
 
-def _occupied_unit_years(pid: int) -> dict:
+def _occupied_unit_years(pid: int, asof: str | None = None) -> dict:
     """Occupied unit-years per bedroom over the window, as the per-unit UNION of
     tenancy intervals (co-tenant and overlapping bookkeeping rows must not double
     count). Returns {bed: unit_years}."""
@@ -93,11 +96,11 @@ def _occupied_unit_years(pid: int) -> dict:
         SELECT u.IBEDROOMS bed, t.HUNIT, t.DTMOVEIN, t.DTMOVEOUT
         FROM [{db.DB_YARDI}].dbo.TENANT t
         JOIN [{db.DB_YARDI}].dbo.UNIT u ON u.HMY = t.HUNIT
-        WHERE t.HPROPERTY = ? AND t.DTMOVEIN IS NOT NULL
+        WHERE t.HPROPERTY = ? AND t.DTMOVEIN IS NOT NULL AND t.{data.OCC_SQL}
           AND u.EXCLUDE = 0 AND u.IBEDROOMS IS NOT NULL""", (pid,))
     if df.empty:
         return {}
-    end = pd.Timestamp.today().normalize()
+    end = pd.Timestamp(data._safe_asof(asof))
     start = end - pd.DateOffset(years=WINDOW_YEARS)
     a = pd.to_datetime(df["DTMOVEIN"]).clip(lower=start)
     b = pd.to_datetime(df["DTMOVEOUT"]).fillna(end).clip(upper=end)
@@ -136,7 +139,8 @@ def _mix_and_rents(pid: int) -> pd.DataFrame:
         GROUP BY u.IBEDROOMS""", (pid,))
 
 
-def _renewal_increase_pct(pid: int) -> float | None:
+def _renewal_increase_pct(pid: int, asof: str | None = None) -> float | None:
+    asof = data._safe_asof(asof)
     """Typical renewal increase from Lease_History successive executed terms (point-in-
     time cRent, iStatus 4/5) — what we'd have charged the retained resident anyway;
     the relet premium only counts NET of this."""
@@ -150,13 +154,14 @@ def _renewal_increase_pct(pid: int) -> float | None:
           WHERE t.HPROPERTY = ? AND lh.iStatus IN (4, 5) AND lh.cRent > 200
         ) g
         WHERE pct IS NOT NULL AND pct BETWEEN -20 AND 30
-          AND g.dtLeaseTo >= DATEADD(YEAR, -{WINDOW_YEARS}, GETDATE())""", (pid,))
+          AND g.dtLeaseTo >= DATEADD(YEAR, -{WINDOW_YEARS}, '{asof}') AND g.dtLeaseTo <= '{asof}'""", (pid,))
     if df.empty or pd.isna(df.iloc[0]["avg_pct"]):
         return None
     return round(float(df.iloc[0]["avg_pct"]), 2)
 
 
-def _gl_make_ready(pid: int, turns: pd.DataFrame) -> dict:
+def _gl_make_ready(pid: int, turns: pd.DataFrame, asof: str | None = None) -> dict:
+    asof = data._safe_asof(asof)
     """Measured make-ready per bedroom: parse `U=<unit>` from GLDETAIL notes on the
     in-scope accounts (IBOOK=1 only — the cash book duplicates every expense), assign
     each invoice to the nearest turn within [move-out - 7d, next move-in + 45d], and
@@ -169,14 +174,14 @@ def _gl_make_ready(pid: int, turns: pd.DataFrame) -> dict:
         FROM [{db.DB_YARDI}].dbo.GLDETAIL g
         JOIN [{db.DB_YARDI}].dbo.ACCT a ON a.HMY = g.HACCT
         WHERE g.HPROP = ? AND g.IBOOK = 1 AND g.SNOTES LIKE 'U=%'
-          AND g.DTDATE >= DATEADD(YEAR, -{WINDOW_YEARS + 1}, GETDATE())
+          AND g.DTDATE >= DATEADD(YEAR, -{WINDOW_YEARS + 1}, '{asof}') AND g.DTDATE <= DATEADD(DAY, 45, '{asof}')
           AND LTRIM(RTRIM(a.SCODE)) IN ({accts})""", (pid,))
     pool = db.query(f"""
         SELECT SUM(g.DAMOUNT) amt
         FROM [{db.DB_YARDI}].dbo.GLDETAIL g
         JOIN [{db.DB_YARDI}].dbo.ACCT a ON a.HMY = g.HACCT
         WHERE g.HPROP = ? AND g.IBOOK = 1
-          AND g.DTDATE >= DATEADD(YEAR, -{WINDOW_YEARS}, GETDATE())
+          AND g.DTDATE >= DATEADD(YEAR, -{WINDOW_YEARS}, '{asof}') AND g.DTDATE <= '{asof}'
           AND LTRIM(RTRIM(a.SCODE)) IN ({",".join(f"'{a}'" for a in POOL_ACCTS)})""", (pid,))
     n_turns = len(turns)
     pool_amt = (float(pool.iloc[0]["amt"]) if not pool.empty
@@ -212,12 +217,12 @@ def _gl_make_ready(pid: int, turns: pd.DataFrame) -> dict:
     return out
 
 
-def _property_block(pid: int) -> dict:
-    turns = _turns_frame(pid)
-    mix = _mix_and_rents(pid)
-    occ = _occupied_unit_years(pid)
-    ri_pct = _renewal_increase_pct(pid)
-    gl = _gl_make_ready(pid, turns)
+def _property_block(pid: int, asof: str) -> dict:
+    turns = _turns_frame(pid, asof)
+    mix = _mix_and_rents(pid)            # current state: in-place rent is not as-of-able
+    occ = _occupied_unit_years(pid, asof)
+    ri_pct = _renewal_increase_pct(pid, asof)
+    gl = _gl_make_ready(pid, turns, asof)
     measured = gl["coverage"] >= _COVERAGE_MIN
 
     prop_days = None
@@ -297,10 +302,13 @@ def _property_block(pid: int) -> dict:
             "annual_turn_cost_total": round(total, 0)}
 
 
-def build(property_ids: list[int] | None = None) -> dict:
-    """The unit-economics ledger for one or more properties. Cached 24h."""
+def build(property_ids: list[int] | None = None, as_of: str | None = None) -> dict:
+    """The unit-economics ledger for one or more properties. `as_of` pins the end of the
+    4-year window (turns, occupancy, renewal increases, GL) so a snapshot is reproducible;
+    default today. Unit mix and in-place rent are always current state. Cached 24h."""
     pids = sorted(int(p) for p in (property_ids or data.DEFAULT_PROPERTY_IDS))
-    key = tuple(pids)
+    asof = data._safe_asof(as_of)
+    key = (tuple(pids), asof)
     hit = _CACHE.get(key)
     if hit and time.time() - hit[0] < _TTL:
         return hit[1]
@@ -308,12 +316,16 @@ def build(property_ids: list[int] | None = None) -> dict:
         hit = _CACHE.get(key)
         if hit and time.time() - hit[0] < _TTL:
             return hit[1]
-        props = [_property_block(p) for p in pids]
+        props = [_property_block(p, asof) for p in pids]
         out = {
             "contract": "multifamily-churn", "view": "unit-economics",
-            "window_years": WINDOW_YEARS,
+            "as_of": asof, "window_years": WINDOW_YEARS,
             "methods": {
-                "turn": "move-out -> next move-in on the same unit, gap 0-365d",
+                "turn": "move-out -> next move-in on the same unit, gap 0-365d, occupancy "
+                        "statuses only (TENANT.ISTATUS 0/1/2/3/4; canceled/denied applications "
+                        "excluded)",
+                "window": f"{WINDOW_YEARS}y ending as_of={asof}; unit mix and in-place rent are "
+                          "current state regardless of as_of",
                 "vacancy_shrinkage": f"empirical Bayes toward property mean, k={SHRINK_K:.0f}",
                 "denominator": "occupied unit-years as per-unit INTERVAL UNION of "
                                "tenancies (sum-of-spans double-counts co-tenancies)",

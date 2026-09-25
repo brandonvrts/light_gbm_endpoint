@@ -71,7 +71,7 @@ def _turn_days(property_ids: list[int]) -> dict:
                                 LEAD(DTMOVEIN) OVER (PARTITION BY HPROPERTY, HUNIT
                                                      ORDER BY DTMOVEIN)) AS gap
                 FROM [{db.DB_YARDI}].dbo.TENANT
-                WHERE HPROPERTY IN ({ids}) AND DTMOVEIN IS NOT NULL
+                WHERE HPROPERTY IN ({ids}) AND DTMOVEIN IS NOT NULL AND {data.OCC_SQL}
             ) g
             WHERE gap >= 0 AND gap <= 365
               AND DTMOVEOUT >= DATEADD(YEAR, -4, GETDATE())
@@ -114,7 +114,7 @@ def _relet_premium(property_ids: list[int]) -> dict:
                      SRENT,
                      LEAD(SRENT) OVER (PARTITION BY HPROPERTY, HUNIT ORDER BY DTMOVEIN) AS next_rent
               FROM [{db.DB_YARDI}].dbo.TENANT
-              WHERE HPROPERTY IN ({ids}) AND DTMOVEIN IS NOT NULL AND SRENT > 200
+              WHERE HPROPERTY IN ({ids}) AND DTMOVEIN IS NOT NULL AND {data.OCC_SQL} AND SRENT > 200
             ) g
             WHERE next_rent > 200 AND DTMOVEOUT >= DATEADD(YEAR,-4,GETDATE())
               AND delta_pct BETWEEN -50 AND 50

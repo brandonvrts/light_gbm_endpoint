@@ -42,6 +42,18 @@ LABEL = "ActualChurn"
 ID_COLS = ["SCODE", "FullName", "UnitCode", "PropertyName", "PropertyId",
            "DecisionDate", "MoveOutDate", "LeaseToDate"]
 
+# TENANT.ISTATUS values that denote a tenancy that occupies (or will occupy) a unit:
+# 0 current, 1 past, 2 future, 3 eviction, 4 notice. 6/7/9 are canceled/denied
+# APPLICATIONS: they carry a planned DTMOVEIN and (almost) never a DTMOVEOUT, so every
+# DTMOVEIN/DTMOVEOUT eligibility filter admits them unless ISTATUS is checked. The
+# 2026-09-25 audit found them to be ~50% of any anchor population (959 of 1,901 at
+# 2024-06-30), 100% of the HasLeaseRecord=0 rows, 35 of 950 served scodes (8 of which
+# displaced a real resident in the per-unit dedup) and the bogus "next move-in" that
+# truncated ledger vacancy gaps. ISTATUS is the CURRENT status, so past residents are 1
+# today -- keep 1 in the set or historical as-of populations lose everyone who left.
+OCCUPANCY_STATUSES = (0, 1, 2, 3, 4)
+OCC_SQL = "ISTATUS IN (0,1,2,3,4)"
+
 # Curated memo-category keyword sets (v6, Phase 2.4). The old serve/train SP matched bare
 # %notice% (counting benign "notice to enter"/"courtesy notice" as EVICTION) and %emergency%
 # (matching emergency-contact memos as MAINTENANCE). These phrases are precise; a memo may
@@ -157,6 +169,7 @@ def pit_features_sql(asof: str, scodes: list[str] | None = None,
         WHERE t.DTMOVEIN IS NOT NULL AND t.DTMOVEIN <= '{a}'
           AND (t.DTMOVEOUT IS NULL OR t.DTMOVEOUT > '{a}')
           AND t.HPROPERTY IN ({idlist})
+          AND t.{OCC_SQL}
           AND t.HUNIT IN (SELECT HMY FROM {Y}.UNIT WHERE EXCLUDE = 0)
           {scode_filter}
     ),
@@ -339,6 +352,7 @@ def active_rentable_scodes(property_ids: list[int], as_of: str | None = None) ->
           AND t.DTLEASEFROM <= '{asof}' AND t.DTMOVEIN <= '{asof}'
           AND (t.DTMOVEOUT IS NULL OR t.DTMOVEOUT > '{asof}')
           AND t.HPROPERTY IN ({ids})
+          AND t.{OCC_SQL}
           AND t.DTLEASETO > '2000-01-01' AND t.DTLEASETO < '2099-01-01'
           AND t.HUNIT IN (SELECT HMY FROM [{db.DB_YARDI}].dbo.[UNIT] WHERE [EXCLUDE] = 0))
     SELECT SCODE FROM elig WHERE rn = 1 AND SCODE IS NOT NULL"""
@@ -387,7 +401,7 @@ def lease_window_cohort(start: str, end: str, property_ids: list[int] | None = N
            al.dtLeaseTo AS LeaseTo, t.DTMOVEOUT AS MoveOut, t.HPROPERTY AS PropertyId
     FROM [{db.DB_YARDI}].dbo.TENANT t
     JOIN active_lease al ON al.hTent = t.HMYPERSON AND al.rn = 1
-    WHERE t.HPROPERTY IN ({ids})
+    WHERE t.HPROPERTY IN ({ids}) AND t.{OCC_SQL}
       AND t.DTMOVEIN IS NOT NULL AND t.DTMOVEIN <= '{e}'
       AND (t.DTMOVEOUT IS NULL OR t.DTMOVEOUT >= '{grace}')
       AND al.dtLeaseTo >= '{s}' AND al.dtLeaseTo <= '{e}'
@@ -464,7 +478,7 @@ def _build_lineages(property_ids: list[int] | None = None) -> dict:
            LOWER(LTRIM(RTRIM(ISNULL(SEMAIL,'')))) AS EM,
            HPROPERTY, DTMOVEIN, DTMOVEOUT
         FROM [{db.DB_YARDI}].dbo.TENANT
-        WHERE HPROPERTY IN ({ids}) AND DTMOVEIN IS NOT NULL""")
+        WHERE HPROPERTY IN ({ids}) AND DTMOVEIN IS NOT NULL AND {OCC_SQL}""")
     eff: dict[int, date] = {}
     transfer: set[int] = set()
     if df.empty:
@@ -611,7 +625,7 @@ def search_tenants_by_name(q: str, property_ids: list[int] | None = None,
         WHERE t.DTLEASEFROM IS NOT NULL AND t.DTLEASETO IS NOT NULL AND t.DTMOVEIN IS NOT NULL
           AND t.DTLEASEFROM <= '{asof}' AND t.DTMOVEIN <= '{asof}'
           AND (t.DTMOVEOUT IS NULL OR t.DTMOVEOUT > '{asof}')
-          AND t.HPROPERTY IN ({ids})
+          AND t.HPROPERTY IN ({ids}) AND t.{OCC_SQL}
           AND (ISNULL(t.SFIRSTNAME,'') + ' ' + ISNULL(t.SLASTNAME,'')) LIKE ?
           AND t.HUNIT IN (SELECT HMY FROM [{db.DB_YARDI}].dbo.[UNIT] WHERE [EXCLUDE] = 0))
     SELECT TOP ({int(limit)}) SCODE, FullName, UnitCode, PropertyId

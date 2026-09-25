@@ -141,7 +141,8 @@ def mf_cohorts(properties: str | None = None, as_of: str | None = None,
 
 
 @app.get("/multifamily/unit-economics")
-def mf_unit_economics(properties: str | None = None, _=Depends(require_key)):
+def mf_unit_economics(properties: str | None = None, as_of: str | None = None,
+                      _=Depends(require_key)):
     """The per-bedroom turnover-economics LEDGER (Phase 1 decision ledger): what one
     turn costs (vacancy months x in-place rent + make-ready, gross and net of the
     re-lease premium), how often units turn (occupied-unit-year denominators), and the
@@ -152,7 +153,7 @@ def mf_unit_economics(properties: str | None = None, _=Depends(require_key)):
     from contracts.multifamily_churn import unit_economics as ue
     pids = [int(x) for x in properties.split(",") if x.strip()] if properties else None
     try:
-        return clean(ue.build(pids))
+        return clean(ue.build(pids, as_of))
     except ValueError as e:
         raise HTTPException(400, str(e))
 

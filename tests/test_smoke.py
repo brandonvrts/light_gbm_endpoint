@@ -785,6 +785,47 @@ def test_concession_cohort_view():
     assert out["n"] > 0, out["summary"]
 
 
+def test_occupancy_filter_in_population_sql():
+    """OFFLINE: every TENANT-based population must exclude canceled/denied application
+    records (ISTATUS 6/7/9) -- they carry DTMOVEIN and never DTMOVEOUT (2026-09-25)."""
+    from contracts.multifamily_churn import data as mfd, unit_economics as ue, persuadables as pers
+    import inspect
+    assert mfd.OCC_SQL == "ISTATUS IN (0,1,2,3,4)"
+    assert mfd.OCC_SQL in mfd.pit_features_sql("2026-01-31", horizon=60), "training SQL"
+    assert mfd.OCC_SQL in mfd.pit_features_sql("2026-01-31"), "serving feature SQL"
+    for fn in (mfd.active_rentable_scodes, mfd.lease_window_cohort, mfd._build_lineages,
+               mfd.search_tenants_by_name, ue._turns_frame, ue._occupied_unit_years,
+               pers._turn_days, pers._relet_premium):
+        assert "OCC_SQL" in inspect.getsource(fn), f"{fn.__name__} lacks the occupancy filter"
+
+
+def test_ledger_excludes_application_records():
+    """DB-GATED: no ledger turn may use a canceled/denied application as its 'next
+    move-in'; as_of pins the window so two calls agree."""
+    if not _db_ok():
+        raise Skip("no DB")
+    from core import db
+    from contracts.multifamily_churn import unit_economics as ue
+    turns = ue._turns_frame(62, "2026-09-25")           # CCV had 87 such turns before the fix
+    assert len(turns) > 300
+    units = db.query(f"SELECT LOWER(LTRIM(RTRIM(SCODE))) ucode, HMY FROM [{db.DB_YARDI}].dbo.UNIT WHERE HPROPERTY = 62")
+    t = turns.merge(units, on="ucode")
+    ids = ",".join(str(int(h)) for h in t["HMY"].unique())
+    # positive check: every 'next move-in' must be a real OCCUPANCY row on that unit (a
+    # denied application can share the same planned date, so a negative match is not proof)
+    occ = db.query(f"""SELECT DISTINCT HUNIT, DTMOVEIN FROM [{db.DB_YARDI}].dbo.TENANT
+                       WHERE HUNIT IN ({ids}) AND ISTATUS IN (0,1,2,3,4) AND DTMOVEIN IS NOT NULL""")
+    import pandas as pd
+    occ["DTMOVEIN"] = pd.to_datetime(occ["DTMOVEIN"])
+    ok = t.merge(occ, left_on=["HMY", "next_in"], right_on=["HUNIT", "DTMOVEIN"], how="left")
+    missing = int(ok["HUNIT"].isna().sum())
+    assert missing == 0, f"{missing} turns whose next move-in is not an occupancy record"
+    a = ue.build([62], as_of="2026-09-25"); b = ue.build([62], as_of="2026-09-25")
+    assert a["as_of"] == "2026-09-25" and a == b
+    two = {r["bedrooms"]: r for r in a["properties"][0]["bedrooms"]}[2]
+    assert two["turnover_rate_per_unit_yr"] > 0.39, two   # was 0.366 with the phantoms
+
+
 def _run():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     passed = skipped = failed = 0

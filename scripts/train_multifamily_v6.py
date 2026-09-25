@@ -306,6 +306,8 @@ def main() -> int:
         "algorithm": "lgbm", "feature_semantics": "v6-roadmap",
         "monotone_constraints": sorted(MONOTONE_DECREASING) if decreasing else [],
         "transfer_aware_labels": True,
+        "population_filter": f"TENANT.{data.OCC_SQL} -- canceled/denied application records "
+                             "excluded from anchors and serving (2026-09-25 audit)",
         "tier_labels": {"high": "Priority outreach", "medium": "Watch", "low": "Stable"},
         "tier_policy": tier_policy,
         "data_source": f"data.pit_features_sql monthly anchors {args.start}..{end} h{args.horizon} "

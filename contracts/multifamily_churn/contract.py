@@ -157,14 +157,14 @@ def _corrected(bundle: dict) -> bool:
     """v5/v6 bundles train AND serve on corrected feature semantics (person-level tenure,
     calendar days-to-lease-end) via data.apply_semantic_fixes and are served without the
     legacy display squash."""
-    return str(bundle.get("feature_semantics", "")).startswith(("v5", "v6"))
+    return str(bundle.get("feature_semantics", "")).startswith(("v5", "v6", "v7"))
 
 
 def _extract_features(scodes: list[str], as_of: str | None, bundle: dict) -> pd.DataFrame:
     """Pick the feature source for the bundle: v6 uses the set-based, as-of-anchored
     point-in-time query (Phase 2.1 -- one query per cohort, no lease-end feature skew, no
     past-month outcome leakage); v5/legacy use the per-resident SP."""
-    if str(bundle.get("feature_semantics", "")).startswith("v6"):
+    if str(bundle.get("feature_semantics", "")).startswith(("v6", "v7")):
         return data.cohort_features_asof(scodes, as_of)
     return data.features_by_scodes(scodes, as_of)
 

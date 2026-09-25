@@ -283,10 +283,11 @@ def _units(hmys: list[int]) -> dict[int, dict]:
     return out
 
 
-def _ledger(pids: list[int]) -> tuple[dict, dict, dict | None]:
-    """Phase 1 turnover ledger indexed (property, bedroom) + property-level context."""
+def _ledger(pids: list[int], asof: str | None = None) -> tuple[dict, dict, dict | None]:
+    """Phase 1 turnover ledger indexed (property, bedroom) + property-level context,
+    pinned to the cohort's as_of so a snapshot is reproducible."""
     try:
-        led = unit_economics.build(pids)
+        led = unit_economics.build(pids, as_of=asof)
     except Exception:  # noqa: BLE001
         return {}, {}, None
     by_bed: dict[tuple[int, int], dict] = {}
@@ -476,7 +477,7 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
 
     # ---- enrichment (each block is additive and never fails the view) ----
     units = _units(g["hMyPerson"].tolist()) if "hMyPerson" in g.columns else {}
-    by_bed, by_prop, led = _ledger(pids)
+    by_bed, by_prop, led = _ledger(pids, asof)
     gar = _garage(pids)
     dur = _duration(g)
     X_in = _model_input(g, b)
