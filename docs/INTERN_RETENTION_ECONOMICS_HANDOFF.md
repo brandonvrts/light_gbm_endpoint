@@ -97,8 +97,6 @@ where `Δ` is the uplift — the reduction in churn probability — we are willi
 
 Base URL `http://10.1.6.17:8910`, header `X-API-Key: rts-local-dev-key`, interactive docs at `/docs`. All Yardi access is **read-only**; anything we write (offers, arms, outcomes) lives in `monitoring/*.jsonl` in this repo.
 
-> ⚠ As of 2026-09-23 the running service (started 2026-08-18) predates the Phase 1 commit, so `/multifamily/unit-economics` returns 404 until Brandon restarts it. Until then: `cd light_gbm_endpoint && .venv/bin/python -c "from contracts.multifamily_churn import unit_economics as ue; import json; print(json.dumps(ue.build(), indent=1))"` (≈20 s, cached 24 h).
-
 ---
 
 ## 1b. Your primary surface — `GET /multifamily/concession-cohort` (added 2026-09-25)
@@ -481,7 +479,7 @@ offer costs (if renewed, 12-mo): free month = rent · 5% term-limited = 0.6 × r
 
 ## 12. Reproducibility
 
-- Ledger: `.venv/bin/python -c "from contracts.multifamily_churn import unit_economics as ue; ..."` (§1 note) or `GET /multifamily/unit-economics` once the service is restarted. Snapshot used here built 2026-09-23.
+- Ledger: `GET /multifamily/unit-economics` (live; cached 24 h in-process) or `.venv/bin/python -c "from contracts.multifamily_churn import unit_economics as ue; import json; print(json.dumps(ue.build(), indent=1))"`. §2 table built 2026-09-23; the attached JSON is the 2026-09-25 pull (identical).
 - Ops levers: `.venv/bin/python scripts/audit_ops_levers.py` (read-only; prints tail, seasonality, lease-end exposure per property).
 - Phase 0 numbers: `scripts/eval_phase0.py`; design + memo in `docs/`.
 - Band flow and power math: Phase 0 memo §11.1–11.2.
