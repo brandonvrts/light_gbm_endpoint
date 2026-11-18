@@ -35,17 +35,34 @@ LOG = ROOT / "monitoring" / "retrain.log"
 # metric_path = keys into manifest.json; higher_better + regression_tol define the gate.
 CONTRACTS = {
     "signal_desk_brokerage": {
-        "trainer": [PY, str(ROOT / "scripts" / "train_brokerage_v03.py")],
-        "candidate_prefix": "v0.3-cand",
-        "metric_path": ["metrics", "pr_auc"],
-        "metric_name": "rolling-origin PR-AUC",
+        "trainer": [PY, str(ROOT / "scripts" / "train_brokerage_v05.py")],
+        "candidate_prefix": "v0.5-cand",
+        "metric_path": ["metrics", "pr_auc"],   # honest nested-grouped-CV combined PR-AUC
+        "metric_name": "nested-grouped-CV PR-AUC (combined head)",
         "higher_better": True,
-        "regression_tol": 0.01,   # don't promote a candidate more than 0.01 below incumbent
-        "timeout": 900,
+        # RELATIVE tolerance (Phase 1.4): 0.01 absolute was ~10% of the metric. Allow a
+        # candidate within 15% of the incumbent (small-n PR-AUC is noisy fold-to-fold).
+        "regression_tol_rel": 0.15,
+        "timeout": 1200,
     },
-    # multifamily_churn: real v4 bundle is trained by the multifamily-prediction repo's
-    # anchor-date pipeline (not local). Wire here once that trainer is vendored:
-    #   "trainer": [PY, "scripts/train_multifamily_v5.py"], "metric_path": ["metrics","walkforward","mean_auc"]
+    "multifamily_churn": {
+        "trainer": [PY, str(ROOT / "scripts" / "train_multifamily_v6.py"), "--horizon", "60"],
+        "candidate_prefix": "v6-cand",
+        # Gate on the OUT-OF-TIME EXPIRING-COHORT AUC, not walk-forward mean_auc: the full
+        # population is ~50% no-lease residents (a trivially-separable near-zero-churn
+        # stratum) that inflates population AUC toward "lease vs no-lease" separation. The
+        # expiring cohort is 100% lease-holders and is the population we actually serve, so
+        # its AUC is the honest decision-level discrimination number.
+        "metric_path": ["metrics", "oot_expiring_holdout", "auc"],
+        "metric_name": "OOT expiring-cohort AUC",
+        "higher_better": True,
+        "regression_tol": 0.03,
+        # secondary: the OOT cohort's predicted vs realized churn must stay within band,
+        # else the candidate is miscalibrated even at good AUC.
+        "calibration_gate": {"path": ["metrics", "oot_expiring_holdout"],
+                             "max_abs_rate_error": 0.06},
+        "timeout": 1800,
+    },
     # marketing: no trained model (live cohort aggregation) -> nothing to retrain.
 }
 
@@ -72,20 +89,50 @@ def run_contract(name: str, dry: bool) -> dict:
         rec.update({"decision": "TRAIN_FAILED", "reason": (proc.stderr or "")[-400:]})
         return rec
 
-    cand_metric = _dig(registry.manifest(name, cand) or {}, cfg["metric_path"])
+    cand_manifest = registry.manifest(name, cand) or {}
+    cand_metric = _dig(cand_manifest, cfg["metric_path"])
     rec["candidate_metric"] = cand_metric
-    tol = cfg["regression_tol"]
+    # absolute tolerance, or a relative fraction of the incumbent metric (Phase 1.4)
+    if "regression_tol_rel" in cfg and inc_metric:
+        tol = abs(inc_metric) * cfg["regression_tol_rel"]
+    else:
+        tol = cfg.get("regression_tol", 0.0)
+    # Phase 1.4: a deterministic retrain on UNCHANGED data reproduces the incumbent exactly
+    # -> log NOOP instead of a vacuous "PROMOTE" that churns default.txt for no reason.
+    inc_shape = _dig(registry.manifest(name, incumbent) or {}, ["metrics", "n_pos_rows"])
+    cand_shape = _dig(cand_manifest, ["metrics", "n_pos_rows"])
+    if (inc_metric is not None and cand_metric == inc_metric and inc_shape == cand_shape):
+        rec.update({"decision": "NOOP_IDENTICAL", "candidate_metric": cand_metric,
+                    "reason": "deterministic retrain reproduced incumbent (unchanged data); "
+                              "keeping current default", "dry_run": dry,
+                    "default_now": incumbent})
+        return rec
     if cand_metric is None:
         promote, reason = False, "candidate metric missing"
     elif inc_metric is None:
         promote, reason = True, "no incumbent"
     elif cfg["higher_better"]:
         promote = cand_metric >= inc_metric - tol
-        reason = (f"{cand_metric:.4f} >= {inc_metric:.4f}-{tol} (no regression)" if promote
-                  else f"REGRESSION {cand_metric:.4f} < {inc_metric:.4f}-{tol}")
+        reason = (f"{cand_metric:.4f} >= {inc_metric:.4f}-{tol:.4f} (no regression)" if promote
+                  else f"REGRESSION {cand_metric:.4f} < {inc_metric:.4f}-{tol:.4f}")
     else:
         promote = cand_metric <= inc_metric + tol
         reason = f"lower-better gate: {promote}"
+
+    # secondary gate: cohort calibration error must be within band (a model can hold AUC
+    # while its published rate drifts -- that would mislead the property team's planning)
+    cg = cfg.get("calibration_gate")
+    if promote and cg:
+        h = _dig(cand_manifest, cg["path"]) or {}
+        pred, real = h.get("predicted_rate"), h.get("realized_rate")
+        if pred is None or real is None:
+            promote, reason = False, "calibration-gate metrics missing"
+        elif abs(pred - real) > cg["max_abs_rate_error"]:
+            promote = False
+            reason = (f"CALIBRATION off: |{pred:.3f}-{real:.3f}|="
+                      f"{abs(pred - real):.3f} > {cg['max_abs_rate_error']}")
+        else:
+            reason += f"; calibration ok (|{pred:.3f}-{real:.3f}|)"
 
     rec.update({"decision": "PROMOTE" if promote else "KEEP_INCUMBENT", "reason": reason, "dry_run": dry})
     if promote and not dry:

@@ -18,4 +18,11 @@ def describe() -> dict:
                    "avg_win_prob": "float", "decile_distribution": "[{decile,count}]",
                    "by_market": "[{market,count,avg_score}]",
                    "cohort_win_rates": "[{vertical,size_band,deal_count,win_rate}]"},
+        "space_demand_views": {
+            "GET /marketing/space-demand": "per-cohort rollup over the spacedemand ML bundle "
+                                           "(expected space-need events ~180d, hot counts)",
+            "GET /marketing/space-demand/leads": "ranked leads inside one cohort "
+                                                 "(cohort=size=mid|vertical=healthcare)",
+            "cohort_vocab": "canonical size bands x verticals (contracts/marketing/cohort.py, "
+                            "byte-parity with marketing CohortVocab.cs / rea.DealPattern)"},
     }

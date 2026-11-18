@@ -1,0 +1,41 @@
+{
+  "contract": "signal-desk-spacedemand",
+  "version": "v0.1-prototype",
+  "status": "PROTOTYPE (not served)",
+  "grain": "company-month",
+  "label": "Facilities Relocation/Expansion scoop (TypeID 8) within 180d",
+  "algorithm": "lightgbm",
+  "metrics": {
+    "logistic": {
+      "tag": "logistic",
+      "oof_n": 35410,
+      "oof_pos": 1320,
+      "base_rate": 0.0373,
+      "pr_auc": 0.3007,
+      "roc_auc": 0.7795,
+      "brier": 0.0312,
+      "pr_auc_lift_vs_base": 0.2642,
+      "pr_auc_lift_ci95": [
+        0.2381,
+        0.2916
+      ]
+    },
+    "lightgbm": {
+      "tag": "lightgbm",
+      "oof_n": 35410,
+      "oof_pos": 1320,
+      "base_rate": 0.0373,
+      "pr_auc": 0.335,
+      "roc_auc": 0.8613,
+      "brier": 0.03,
+      "pr_auc_lift_vs_base": 0.2981,
+      "pr_auc_lift_ci95": [
+        0.2721,
+        0.3266
+      ]
+    }
+  },
+  "feature_count": 19,
+  "note": "PROTOTYPE space-demand lead-gen on the self-contained zi.Scoop panel. SERVED at GET /brokerage/space-demand-leads (size-banded + pipeline-deduped, 2026-07-16); a research prioritization list, NOT a conversion predictor.",
+  "status_note": "served-as-prototype (label unchanged; PR-AUC saturated ~0.34)"
+}

@@ -1,0 +1,7 @@
+{"logged_at": "2026-07-15T09:51:45", "month": "2026-06", "model_version": "v6-roadmap-h60", "cohort_size": 124, "pending": 13, "predicted_churn_rate": 0.284, "realized_churn_rate": 0.3153, "gap": -0.0313, "alert": false}
+{"logged_at": "2026-07-15T10:31:02", "month": "2026-02", "model_version": "v6-roadmap-h60", "cohort_size": 63, "pending": 2, "predicted_churn_rate": 0.3036, "realized_churn_rate": 0.3279, "gap": -0.0243, "alert": false}
+{"logged_at": "2026-07-15T12:59:09", "month": "2025-12", "model_version": "v6-roadmap-h60", "cohort_size": 3, "pending": 0, "predicted_churn_rate": 0.0354, "realized_churn_rate": 0.3333, "gap": -0.2979, "alert": true}
+{"logged_at": "2026-07-15T12:59:11", "month": "2025-06", "model_version": "v6-roadmap-h60", "cohort_size": 112, "pending": 1, "predicted_churn_rate": 0.3077, "realized_churn_rate": 0.5586, "gap": -0.2509, "alert": true}
+{"logged_at": "2026-07-15T12:59:12", "month": "2024-03", "model_version": "v6-roadmap-h60", "cohort_size": 86, "pending": 0, "predicted_churn_rate": 0.3277, "realized_churn_rate": 0.6628, "gap": -0.3351, "alert": true}
+{"logged_at": "2026-07-15T12:59:15", "month": "2020-01", "model_version": "v6-roadmap-h60", "cohort_size": 52, "pending": 0, "predicted_churn_rate": 0.2079, "realized_churn_rate": 0.8077, "gap": -0.5998, "alert": true}
+{"logged_at": "2026-07-15T16:04:14", "month": "2026-04", "model_version": "v6-roadmap-h60", "cohort_size": 93, "pending": 2, "predicted_churn_rate": 0.2195, "realized_churn_rate": 0.2418, "gap": -0.0223, "alert": false}

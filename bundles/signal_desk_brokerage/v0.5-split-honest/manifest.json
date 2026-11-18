@@ -1,0 +1,108 @@
+{
+  "contract": "signal-desk-brokerage",
+  "version": "v0.5-split-honest",
+  "bundle_format": "brokerage-split-v0.5",
+  "trained_at": "20260716_093430",
+  "heads": {
+    "pipeline_momentum": {
+      "features": [
+        "pipeline_status",
+        "days_in_current_stage",
+        "stage_transitions_count",
+        "had_stage_regression",
+        "pipeline_probability"
+      ],
+      "pr_auc": 0.1186,
+      "pr_auc_no_skill": 0.0086,
+      "pr_auc_lift_ci95": [
+        0.0884,
+        0.1428
+      ],
+      "roc_auc": 0.9334,
+      "oof_pos": 259
+    },
+    "cold_fit": {
+      "features": [
+        "prospect_age_days",
+        "zi_employee_count",
+        "has_c_level_contact",
+        "source_code",
+        "tech_count",
+        "tech_has_crm",
+        "max_contact_accuracy",
+        "zi_company_age_years"
+      ],
+      "pr_auc": 0.0271,
+      "pr_auc_no_skill": 0.0086,
+      "pr_auc_lift_ci95": [
+        0.0138,
+        0.0249
+      ],
+      "roc_auc": 0.7318,
+      "oof_pos": 259
+    },
+    "combined": {
+      "features": [
+        "pipeline_status",
+        "prospect_age_days",
+        "stage_transitions_count",
+        "linked_contact_count",
+        "zi_employee_count",
+        "days_in_current_stage",
+        "source_code",
+        "max_contact_accuracy"
+      ],
+      "pr_auc": 0.0833,
+      "pr_auc_no_skill": 0.0086,
+      "pr_auc_lift_ci95": [
+        0.0614,
+        0.0919
+      ],
+      "roc_auc": 0.9273,
+      "oof_pos": 259
+    }
+  },
+  "opportunity_tiers": {
+    "combined": {
+      "hot_min": 0.0262,
+      "warm_min": 0.002,
+      "hot_share": 0.1,
+      "hot_realized_conv": 0.0557,
+      "hot_recall": 0.649,
+      "warm_realized_conv": 0.022,
+      "hot_plus_warm_recall": 0.985,
+      "labels": {
+        "hot": "Hot lead",
+        "warm": "Watch",
+        "cold": "Low priority"
+      },
+      "basis": "OOF quantiles (hot=top 10%, warm=next 20%)"
+    },
+    "cold_fit": {
+      "hot_min": 0.0224,
+      "warm_min": 0.0096,
+      "hot_share": 0.1,
+      "hot_realized_conv": 0.0355,
+      "hot_recall": 0.413,
+      "warm_realized_conv": 0.0109,
+      "hot_plus_warm_recall": 0.668,
+      "labels": {
+        "hot": "Hot lead",
+        "warm": "Watch",
+        "cold": "Low priority"
+      },
+      "basis": "OOF quantiles (hot=top 10%, warm=next 20%)"
+    }
+  },
+  "metrics": {
+    "pr_auc": 0.0833,
+    "pr_auc_no_skill": 0.0086,
+    "pr_auc_lift_ci95": [
+      0.0614,
+      0.0919
+    ],
+    "roc_auc": 0.9273,
+    "oof_pos": 259
+  },
+  "note": "Honest nested group-disjoint CV (the reported PR-AUC is ~20% below the old rolling-origin figure, which was inflated by pre-fold selection + prospect memorization). Two heads: cold_fit (cold prospecting) vs pipeline_momentum (deal-in-motion). INTERIM/data-limited (54 events)."
+}

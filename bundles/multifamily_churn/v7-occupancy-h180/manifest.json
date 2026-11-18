@@ -1,0 +1,408 @@
+{
+  "feature_columns": [
+    "TenureDaysAtAnchor",
+    "TenureMonths",
+    "DaysToLeaseEnd",
+    "PlannedLeaseDays",
+    "IsLeaseExpiringSoon",
+    "LeaseTermMonths",
+    "DecisionNumber",
+    "CurrentRent",
+    "ActiveRent",
+    "PriorRent",
+    "RentIncreasePct",
+    "HasNotice",
+    "DaysSinceNotice",
+    "NSFCount",
+    "NoPaymentsFlag",
+    "MoveInMonth",
+    "MoveInYear",
+    "DecisionMonth",
+    "DecisionYear",
+    "WorkOrderCount",
+    "WorkOrderFrequency",
+    "EmergencyWorkOrders",
+    "AvgDaysToComplete",
+    "WorkOrders_Last90Days",
+    "WorkOrders_Last180Days",
+    "WorkOrders_Last365Days",
+    "EmergencyWO_Last90Days",
+    "DaysSinceLastWorkOrder",
+    "OpenWorkOrdersAtAnchor",
+    "MaxOpenWorkOrderAge",
+    "EarlyWorkOrders30d",
+    "MemoCount",
+    "MemoFrequency",
+    "Memos_Last90Days",
+    "Memos_Last180Days",
+    "Memos_Last365Days",
+    "DaysSinceLastMemo",
+    "EvictionMemos",
+    "PaymentMemos",
+    "ComplaintMemos",
+    "MaintenanceMemos",
+    "PetCount",
+    "HasLargePets",
+    "HasLeaseRecord",
+    "PropertyName_encoded",
+    "PrimaryPetType_encoded"
+  ],
+  "target_column": "MoveOutInHorizon",
+  "feature_medians": {
+    "TenureDaysAtAnchor": 612.0,
+    "TenureMonths": 20.105124835742444,
+    "DaysToLeaseEnd": 189.0,
+    "PlannedLeaseDays": 371.0,
+    "IsLeaseExpiringSoon": 0.0,
+    "LeaseTermMonths": 12.0,
+    "DecisionNumber": 1.0,
+    "CurrentRent": 1120.0,
+    "ActiveRent": 1125.0,
+    "PriorRent": 1035.0,
+    "RentIncreasePct": 4.25531914893617,
+    "HasNotice": 0.0,
+    "DaysSinceNotice": 22.0,
+    "NSFCount": 0.0,
+    "NoPaymentsFlag": 0.0,
+    "MoveInMonth": 7.0,
+    "MoveInYear": 2021.0,
+    "DecisionMonth": 6.0,
+    "DecisionYear": 2024.0,
+    "WorkOrderCount": 4.0,
+    "WorkOrderFrequency": 2.6666666666666665,
+    "EmergencyWorkOrders": 0.0,
+    "AvgDaysToComplete": 1.375,
+    "WorkOrders_Last90Days": 1.0,
+    "WorkOrders_Last180Days": 2.0,
+    "WorkOrders_Last365Days": 3.0,
+    "EmergencyWO_Last90Days": 0.0,
+    "DaysSinceLastWorkOrder": 74.0,
+    "OpenWorkOrdersAtAnchor": 0.0,
+    "MaxOpenWorkOrderAge": 0.0,
+    "EarlyWorkOrders30d": 0.0,
+    "MemoCount": 0.0,
+    "MemoFrequency": 0.0,
+    "Memos_Last90Days": 0.0,
+    "Memos_Last180Days": 0.0,
+    "Memos_Last365Days": 0.0,
+    "DaysSinceLastMemo": 9999.0,
+    "EvictionMemos": 0.0,
+    "PaymentMemos": 0.0,
+    "ComplaintMemos": 0.0,
+    "MaintenanceMemos": 0.0,
+    "PetCount": 0.0,
+    "HasLargePets": 0.0,
+    "HasLeaseRecord": 1.0,
+    "PropertyName_encoded": 3.0,
+    "PrimaryPetType_encoded": 35.0
+  },
+  "version": "v7-occupancy-h180",
+  "trained_at": "20260925_1531",
+  "horizon_days": 180,
+  "algorithm": "lgbm",
+  "feature_semantics": "v6-roadmap",
+  "monotone_constraints": [
+    "TenureDaysAtAnchor",
+    "TenureMonths"
+  ],
+  "transfer_aware_labels": true,
+  "population_filter": "TENANT.ISTATUS IN (0,1,2,3,4) -- canceled/denied application records excluded from anchors and serving (2026-09-25 audit)",
+  "tier_labels": {
+    "high": "Priority outreach",
+    "medium": "Watch",
+    "low": "Stable"
+  },
+  "tier_policy": {
+    "capacity_frac": 0.22,
+    "watch_frac": 0.45,
+    "high_share": 0.23198594024604569,
+    "high_realized_churn": 0.6136363636363636,
+    "high_recall": 0.5547945205479452,
+    "watch_share": 0.2179261862917399,
+    "watch_realized_churn": 0.23387096774193547,
+    "high_plus_watch_recall": 0.7534246575342466,
+    "basis": "OOT expiring-soon cohort (DaysToLeaseEnd in [-15,60])"
+  },
+  "data_source": "data.pit_features_sql monthly anchors 2022-01-31..2026-02-28 h180 (person-tenure, PIT lease/rent, LEFT-JOIN coverage, curated memos)",
+  "train_window": {
+    "n_samples": 47036,
+    "n_tenants": 2528,
+    "churn_rate": 0.18247725146696148,
+    "anchor_min": "2022-01-31",
+    "anchor_max": "2026-02-28"
+  },
+  "thresholds": {
+    "churn_decision": 0.3056282102395457,
+    "risk_low_max": 0.2012681372340309,
+    "risk_medium_max": 0.3056282102395457,
+    "source": "capacity-based (OOT expiring cohort quantiles)"
+  },
+  "calibration": {
+    "calibrated": true,
+    "method": "spline (PCHIP/isotonic) + expiring-cohort intercept",
+    "rescale_a": 0.0742877362257629,
+    "prob_floor": 0.005,
+    "prob_ceil": 0.95
+  },
+  "metrics": {
+    "walkforward": {
+      "folds": [
+        {
+          "cutoff": "2023-01",
+          "auc": 0.6927288361782558
+        },
+        {
+          "cutoff": "2023-04",
+          "auc": 0.735357175816063
+        },
+        {
+          "cutoff": "2023-07",
+          "auc": 0.6557537205353575
+        },
+        {
+          "cutoff": "2023-10",
+          "auc": 0.7174908787812013
+        },
+        {
+          "cutoff": "2024-01",
+          "auc": 0.6879541941829422
+        },
+        {
+          "cutoff": "2024-04",
+          "auc": 0.7759505122606254
+        },
+        {
+          "cutoff": "2024-07",
+          "auc": 0.6747055942781649
+        },
+        {
+          "cutoff": "2024-10",
+          "auc": 0.6823939565046284
+        },
+        {
+          "cutoff": "2025-01",
+          "auc": 0.7332527779161891
+        },
+        {
+          "cutoff": "2025-04",
+          "auc": 0.7962634694269848
+        },
+        {
+          "cutoff": "2025-07",
+          "auc": 0.7336650625966951
+        },
+        {
+          "cutoff": "2025-10",
+          "auc": 0.7269115360185733
+        }
+      ],
+      "mean_auc": 0.7177023095413069,
+      "std_auc": 0.039685780523858995,
+      "n_folds": 12
+    },
+    "oot_expiring_holdout": {
+      "months": [
+        "2025-09",
+        "2025-10",
+        "2025-11",
+        "2025-12",
+        "2026-01",
+        "2026-02"
+      ],
+      "subpop": "OOT DaysToLeaseEnd in [-15,60]",
+      "n": 569,
+      "realized_rate": 0.2565905096660808,
+      "predicted_rate": 0.2593043444615468,
+      "auc": 0.8082920431361119,
+      "pr_auc": 0.7136494874819087,
+      "brier": 0.11731055456618868,
+      "distinct_scores": 307
+    }
+  },
+  "feature_importance": [
+    {
+      "Feature": "PlannedLeaseDays",
+      "Importance": 0.09949802796701326
+    },
+    {
+      "Feature": "CurrentRent",
+      "Importance": 0.08443886697741126
+    },
+    {
+      "Feature": "RentIncreasePct",
+      "Importance": 0.07637145930441018
+    },
+    {
+      "Feature": "DaysToLeaseEnd",
+      "Importance": 0.06937970598780925
+    },
+    {
+      "Feature": "PriorRent",
+      "Importance": 0.05037647902474005
+    },
+    {
+      "Feature": "AvgDaysToComplete",
+      "Importance": 0.04912154894227322
+    },
+    {
+      "Feature": "MoveInMonth",
+      "Importance": 0.04625313732520617
+    },
+    {
+      "Feature": "MoveInYear",
+      "Importance": 0.0380064539261384
+    },
+    {
+      "Feature": "ActiveRent",
+      "Importance": 0.03549659376120473
+    },
+    {
+      "Feature": "TenureDaysAtAnchor",
+      "Importance": 0.03495876658300466
+    },
+    {
+      "Feature": "WorkOrderCount",
+      "Importance": 0.034062387952671205
+    },
+    {
+      "Feature": "HasNotice",
+      "Importance": 0.0285048404446038
+    },
+    {
+      "Feature": "PrimaryPetType_encoded",
+      "Importance": 0.026712083183936895
+    },
+    {
+      "Feature": "NSFCount",
+      "Importance": 0.0247400501972033
+    },
+    {
+      "Feature": "DaysSinceLastMemo",
+      "Importance": 0.023485120114736465
+    },
+    {
+      "Feature": "WorkOrders_Last365Days",
+      "Importance": 0.02187163858013625
+    },
+    {
+      "Feature": "DecisionYear",
+      "Importance": 0.017569021154535677
+    },
+    {
+      "Feature": "EmergencyWorkOrders",
+      "Importance": 0.016493366798135532
+    },
+    {
+      "Feature": "Memos_Last365Days",
+      "Importance": 0.016493366798135532
+    },
+    {
+      "Feature": "LeaseTermMonths",
+      "Importance": 0.016314091072068843
+    },
+    {
+      "Feature": "PetCount",
+      "Importance": 0.01613481534600215
+    },
+    {
+      "Feature": "PropertyName_encoded",
+      "Importance": 0.015955539619935462
+    },
+    {
+      "Feature": "DecisionNumber",
+      "Importance": 0.013804230907135173
+    },
+    {
+      "Feature": "DaysSinceLastWorkOrder",
+      "Importance": 0.013445679455001793
+    },
+    {
+      "Feature": "DaysSinceNotice",
+      "Importance": 0.012907852276801721
+    },
+    {
+      "Feature": "PaymentMemos",
+      "Importance": 0.011473646468268197
+    },
+    {
+      "Feature": "Memos_Last180Days",
+      "Importance": 0.011115095016134816
+    },
+    {
+      "Feature": "MemoCount",
+      "Importance": 0.010756543564001434
+    },
+    {
+      "Feature": "EarlyWorkOrders30d",
+      "Importance": 0.010577267837934744
+    },
+    {
+      "Feature": "NoPaymentsFlag",
+      "Importance": 0.010218716385801362
+    },
+    {
+      "Feature": "DecisionMonth",
+      "Importance": 0.008246683399067766
+    },
+    {
+      "Feature": "ComplaintMemos",
+      "Importance": 0.008246683399067766
+    },
+    {
+      "Feature": "TenureMonths",
+      "Importance": 0.007888131946934385
+    },
+    {
+      "Feature": "MaintenanceMemos",
+      "Importance": 0.007350304768734313
+    },
+    {
+      "Feature": "WorkOrderFrequency",
+      "Importance": 0.005557547508067408
+    },
+    {
+      "Feature": "MaxOpenWorkOrderAge",
+      "Importance": 0.005378271782000717
+    },
+    {
+      "Feature": "HasLargePets",
+      "Importance": 0.005378271782000717
+    },
+    {
+      "Feature": "WorkOrders_Last180Days",
+      "Importance": 0.005019720329867336
+    },
+    {
+      "Feature": "EmergencyWO_Last90Days",
+      "Importance": 0.0026891358910003586
+    },
+    {
+      "Feature": "EvictionMemos",
+      "Importance": 0.0023305844388669776
+    },
+    {
+      "Feature": "MemoFrequency",
+      "Importance": 0.0017927572606669057
+    },
+    {
+      "Feature": "WorkOrders_Last90Days",
+      "Importance": 0.0014342058085335247
+    },
+    {
+      "Feature": "IsLeaseExpiringSoon",
+      "Importance": 0.0010756543564001434
+    },
+    {
+      "Feature": "Memos_Last90Days",
+      "Importance": 0.0007171029042667623
+    },
+    {
+      "Feature": "OpenWorkOrdersAtAnchor",
+      "Importance": 0.00035855145213338117
+    },
+    {
+      "Feature": "HasLeaseRecord",
+      "Importance": 0.0
+    }
+  ]
+}

@@ -15,3 +15,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# resident-level training extracts / logs (PII; rebuilt by scripts/train_multifamily_v8.py)
+data/renewal_v8/
