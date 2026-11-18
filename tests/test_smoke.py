@@ -88,7 +88,11 @@ def test_kathleen_gray_reads_low():
     t = (mf.lookup_tenant("Kathleen Gray") or {}).get("tenant") or {}
     assert t.get("found"), "Kathleen Gray not resolved"
     assert (t.get("tenure_months") or 0) > 150, f"tenure not person-level: {t.get('tenure_months')}"
-    assert t["churn_probability"] < 0.15, f"14y no-notice resident scored high: {t['churn_probability']}"
+    # v8 renewal models predict P(leave at lease end) on a ~28% base whose calibrated
+    # "low" band realizes ~18% churn, so a long-tenure stayer sits ~0.14-0.16 there;
+    # horizon models (v7) put her well under 0.15.
+    cap = 0.20 if str(mf._bundle().get("version") or "").startswith("v8") else 0.15
+    assert t["churn_probability"] < cap, f"14y no-notice resident scored high: {t['churn_probability']}"
     assert t["risk_tier"] == "low"
     assert t.get("why"), "missing explanation"
 
@@ -193,7 +197,14 @@ def test_mf_cohort_registry_shape():
 
 def test_mf_cohort_catalog_and_report():
     """Catalog + report agree with each other and with the validated analysis: holdover
-    is the standout (lift > 2), pending-decision excludes notice-givers, math is coherent."""
+    is the standout, pending-decision excludes notice-givers, math is coherent.
+
+    Holdover expectation depends on the served target:
+      - horizon models (v7 '...-h60'): P(move-out within 60d) -> holdover lift > 2.
+      - v8 renewal model: P(leave at lease end). In-window residents already sit near
+        the ~28% renewal-churn base, so lift is modest (~1.2x); check the LEVEL instead.
+        Backtest 2023-01..2026-06 (n=1,355 holdover resident-months): 33% moved out
+        within 90d -> holdover avg_churn must land in [0.25, 0.45] and lift > 1."""
     if not _db_ok():
         raise Skip("no DB")
     from contracts.multifamily_churn import cohorts as mc
@@ -203,7 +214,11 @@ def test_mf_cohort_catalog_and_report():
     keys = {c["cohort"] for c in cat["cohorts"]}
     assert keys == set(mc.COHORTS)
     hold = next(c for c in cat["cohorts"] if c["cohort"] == "holdover-mtm")
-    assert hold["n"] > 20 and hold["lift_vs_portfolio"] > 2.0, f"holdover lost its signal: {hold}"
+    if str(cat.get("model_version") or "").startswith("v8"):
+        assert hold["n"] > 20 and hold["lift_vs_portfolio"] > 1.0, f"holdover lost its signal: {hold}"
+        assert 0.25 <= hold["avg_churn"] <= 0.45, f"holdover level off vs 33% backtest: {hold}"
+    else:
+        assert hold["n"] > 20 and hold["lift_vs_portfolio"] > 2.0, f"holdover lost its signal: {hold}"
 
     rep = mc.report("holdover-mtm", top=5)
     assert rep["n"] == hold["n"] and rep["expected_moveouts"] == hold["expected_moveouts"]
@@ -252,9 +267,15 @@ def test_persuadables_band_and_economics():
     # model-side why present for most members (explanations are the PM value-add)
     with_why = sum(1 for m in out["members"] if m["why"])
     assert with_why >= 0.8 * len(out["members"]), f"explanations missing ({with_why}/{len(out['members'])})"
-    # the band is scored on the h180 renewal forecast, never the h60 triage default
+    # the band is scored on the pinned renewal bundle, never the h60 triage default
     assert out["model_version"] == pers.RENEWAL_BUNDLE, out["model_version"]
-    assert out["horizon_days"] == 180
+    if str(out["model_version"]).startswith("v8"):
+        # v8 scores are compressed -> band limited to the trained 45-210 d lead window
+        lo, hi = pers.V8_LEAD_WINDOW
+        assert all(m["days_to_lease_end"] is not None and lo <= m["days_to_lease_end"] <= hi
+                   for m in out["members"]), "v8 persuadable outside trained lead window"
+    else:
+        assert out["horizon_days"] == 180
     # DEFAULT MODE (no flip_rate): assumption-free breakeven, no projected saves
     sc0 = out["economics"]["scenario"]
     assert sc0["assumed_flip_rate"] is None and sc0["expected_saves"] is None \
@@ -737,7 +758,7 @@ def test_concession_cohort_view():
     # the agreed persuadable band (0.20-0.60) is the non-empty anchor for data checks;
     # the default band (now also 0.20-0.60) is checked for SHAPE only on one property
     out = cc.build(None, band_low=0.20, band_high=0.60, decision_window_days=180)
-    assert out["view"] == "concession-cohort" and out["model_version"].endswith("h180")
+    assert out["view"] == "concession-cohort" and out["model_version"] == cc.RENEWAL_BUNDLE
     d = cc.build([82])
     for k in ("n", "shown", "cohort", "offers_summary", "context", "members", "summary"):
         assert k in d, f"default-band response missing {k}"

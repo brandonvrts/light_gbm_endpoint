@@ -23,9 +23,16 @@ assumption-free BREAKEVEN flip rate (the rate at which spend = value saved) inst
 speculative save counts. The outreach log's incentive_* actions accumulate the
 denominator that turns assumption into measurement.
 
-Scoring uses the h180 renewal-forecast bundle explicitly (not the serving default):
+Scoring uses the renewal bundle explicitly (not the serving default):
 the h60 triage ranker compresses nearly the whole population below the band floor
 (3 vs 18 band members at 62W — Phase 0 memo §4).
+
+2026-11-18: pinned to v8.1-renewal-pit (PIT-safe; replaces v7-occupancy-h180, which read
+current-state NSF/pet/DTNOTICE). v8 scores are COMPRESSED (half the roster sits at
+0.30-0.32), so the 0.20-0.60 band alone would hold ~650 of ~930 residents. With no
+`month`, the band is therefore limited to leases ending in v8's trained 45-210 day lead
+window (V8_LEAD_WINDOW); with `month`, the month filter sets the timing. Notice = TENANT
+notice OR the PIT tenant_history notice event.
 """
 from __future__ import annotations
 import time
@@ -39,7 +46,8 @@ BAND_LOW, BAND_HIGH = 0.20, 0.60
 # The band is defined on the churn probability at the NEXT LEASE DECISION — that is
 # the 180-day renewal forecast, not the 60-day triage ranker the registry serves by
 # default. Pinned here so a default-bundle change can't silently empty the band.
-RENEWAL_BUNDLE = "v7-occupancy-h180"   # promoted 2026-09-25 (occupancy-filtered population)
+RENEWAL_BUNDLE = "v8.1-renewal-pit"    # 2026-11-18 (was v7-occupancy-h180 since 2026-09-25)
+V8_LEAD_WINDOW = (46, 210)             # days to lease end, inclusive; v8 trained on (45, 210]
 MAKE_READY_COST = 600.0
 FALLBACK_TURN_DAYS = 45.0
 _AVG_DAYS_PER_MONTH = 30.44
@@ -188,20 +196,35 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
     pids = sorted(int(p) for p in (property_ids or data.DEFAULT_PROPERTY_IDS))
     df, b = cohorts._scored_frame(pids, as_of, version=RENEWAL_BUNDLE)
     asof = data._safe_asof(as_of)
+    is_v8 = contract._is_v8(b)
     meta = {"contract": "multifamily-churn", "view": "persuadables",
             "model_version": b.get("version"),
             "horizon_days": b.get("horizon_days"), "as_of": asof,
             "properties": [{"property_id": p, "name": data.PROPERTIES.get(p)} for p in pids],
             "month": month,
             "band": {"low": band_low, "high": band_high,
-                     "note": "calibrated churn probability at the next lease decision; "
-                             "notice-filed residents excluded (lost causes)"}}
+                     "note": ("calibrated chance of moving out at the end of the current "
+                              "lease (v8 renewal model); notice-filed residents excluded; "
+                              + (f"limited to leases ending in {month}" if month else
+                                 f"limited to leases ending {V8_LEAD_WINDOW[0]}-"
+                                 f"{V8_LEAD_WINDOW[1]} days out (the model's trained window)")
+                              if is_v8 else
+                              "calibrated churn probability at the next lease decision; "
+                              "notice-filed residents excluded (lost causes)")}}
     if df.empty:
         return {**meta, "population": {"n": 0}, "n": 0, "members": [],
                 "summary": "No active residents found."}
 
     notice = pd.to_numeric(df.get("HasNotice"), errors="coerce").fillna(0) == 1
+    if is_v8:
+        notice = notice | (pd.to_numeric(df.get("X_ev_notice_active"), errors="coerce").fillna(0) == 1)
     band = df["p_churn"].between(band_low, band_high, inclusive="left") & ~notice
+    outside_window_n = 0
+    if is_v8 and not month:
+        d2e = pd.to_numeric(df.get("_d2e"), errors="coerce")
+        in_win = d2e.between(*V8_LEAD_WINDOW).fillna(False)
+        outside_window_n = int((band & ~in_win).sum())
+        band = band & in_win
     if month:
         # "edge residents FOR AUGUST" = band members whose lease decision lands in that
         # month (lease_to in YYYY-MM); holdovers only appear in their actual end month
@@ -217,7 +240,8 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
            "expected_moveouts": round(float(df["p_churn"].sum()), 1),
            "notice_given_n": int(notice.sum()),
            "sure_things_n": int(((df["p_churn"] < band_low) & ~notice).sum()),
-           "above_band_n": int(((df["p_churn"] >= band_high) & ~notice).sum())}
+           "above_band_n": int(((df["p_churn"] >= band_high) & ~notice).sum()),
+           "in_band_outside_lead_window_n": outside_window_n}
     if g.empty:
         scope = f" with a lease decision in {month}" if month else ""
         return {**meta, "population": pop, "n": 0, "members": [],
@@ -362,8 +386,11 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
                 f"(historical bound: single digits), so no save count is projected.")
     summary = (
         f"{len(g)} residents sit in the persuadable band ({band_low}-{band_high} churn "
-        f"probability at the {b.get('horizon_days')}-day renewal decision, no notice){scope} "
-        f"out of {pop['n']} scored — {exp_moveouts:.1f} expected move-outs worth "
+        + (f"chance of moving out at lease end, no notice, lease ending "
+           f"{V8_LEAD_WINDOW[0]}-{V8_LEAD_WINDOW[1]} days out){scope} " if is_v8 and not month else
+           f"chance of moving out at lease end, no notice){scope} " if is_v8 else
+           f"probability at the {b.get('horizon_days')}-day renewal decision, no notice){scope} ")
+        + f"out of {pop['n']} scored — {exp_moveouts:.1f} expected move-outs worth "
         f"${do_nothing:,.0f} in turns if we do nothing. {tail} "
         f"{pop['sure_things_n']} residents below the band are the do-not-disturb list.")
 

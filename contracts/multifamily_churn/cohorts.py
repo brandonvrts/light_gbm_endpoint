@@ -124,10 +124,15 @@ def _scored_frame(property_ids: list[int] | None, as_of: str | None,
         scodes = data.active_rentable_scodes(pids, asof)
         df = contract._extract_features(scodes, asof, b)
         if not df.empty:
-            if contract._corrected(b):
-                df = data.apply_semantic_fixes(df, asof)
-            X = prepare_v4.prepare(df, b)
-            p = b["model"].predict_proba(b["scaler"].transform(X))[:, 1]
+            if contract._is_v8(b):
+                from contracts.multifamily_churn.renewal import serve as v8
+                p = v8.predict(df, b)[0]
+                df = df.assign(LeaseToDate=df["LeaseToDisplay"])
+            else:
+                if contract._corrected(b):
+                    df = data.apply_semantic_fixes(df, asof)
+                X = prepare_v4.prepare(df, b)
+                p = b["model"].predict_proba(b["scaler"].transform(X))[:, 1]
             df = df.reset_index(drop=True)
             df["p_churn"] = np.asarray(p, dtype=float)
             # real calendar distance to lease end (display fix, commit 1198b85) — the
@@ -157,8 +162,12 @@ def _meta(b, asof: str, pids: list[int] | None) -> dict:
     return {"contract": "multifamily-churn", "model_version": b.get("version"),
             "as_of": asof,
             "properties": [{"property_id": p, "name": data.PROPERTIES.get(p)} for p in pids],
-            "horizon_note": "probabilities are calibrated move-out risk at each resident's "
-                            "NEXT lease decision (60-day horizon)"}
+            "horizon_note": (
+                "probabilities are calibrated chance of moving out at the end of each "
+                "resident's current lease (trained on leases ending 45-210 days out)"
+                if contract._is_v8(b) else
+                "probabilities are calibrated move-out risk at each resident's "
+                "NEXT lease decision (60-day horizon)")}
 
 
 def catalog(property_ids: list[int] | None = None, as_of: str | None = None) -> dict:

@@ -38,6 +38,11 @@ ENTER_P = 0.20
 EXIT_P = 0.15
 WATCH_P = 0.15
 RENEWAL_PUSH_DAYS = 60
+# Pinned 2026-11-18: the ENTER_P/EXIT_P gates were tuned on the h60 ranker (the serving
+# default until 2026-11-16). On v8.1 (compressed renewal scores, median ~0.30) nearly the
+# whole roster clears 0.20, so following the default would enroll ~640 residents.
+# Keep h60 until the gates are re-derived for v8.
+EDGE_BUNDLE = "v7-occupancy-h60"
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 _STATE_F = ROOT / "monitoring" / "edge_roster.json"
@@ -59,7 +64,7 @@ def _duration_bundle():
 def _frame_rows(as_of: str | None) -> tuple[dict, str, dict]:
     """Current population as {scode: row-dict} with churn p, notice, lease timing and
     the stayer-type trait score attached."""
-    df, cb = cohorts._scored_frame(None, as_of)
+    df, cb = cohorts._scored_frame(None, as_of, version=EDGE_BUNDLE)
     asof = data._safe_asof(as_of)
     if df.empty:
         return {}, asof, {"churn": cb.get("version")}

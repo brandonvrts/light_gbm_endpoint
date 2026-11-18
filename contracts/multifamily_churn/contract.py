@@ -163,14 +163,90 @@ def _corrected(bundle: dict) -> bool:
 def _extract_features(scodes: list[str], as_of: str | None, bundle: dict) -> pd.DataFrame:
     """Pick the feature source for the bundle: v6 uses the set-based, as-of-anchored
     point-in-time query (Phase 2.1 -- one query per cohort, no lease-end feature skew, no
-    past-month outcome leakage); v5/legacy use the per-resident SP."""
+    past-month outcome leakage); v5/legacy use the per-resident SP. v8 uses the ported
+    branch feature block (renewal/serve.py)."""
+    if _is_v8(bundle):
+        from contracts.multifamily_churn.renewal import serve as v8
+        return v8.features(scodes, data._safe_asof(as_of))
     if str(bundle.get("feature_semantics", "")).startswith(("v6", "v7")):
         return data.cohort_features_asof(scodes, as_of)
     return data.features_by_scodes(scodes, as_of)
 
 
+def _is_v8(bundle: dict) -> bool:
+    return str(bundle.get("feature_semantics", "")).startswith("v8")
+
+
+def _num(v, nd=None):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(f):
+        return None
+    return round(f, nd) if nd is not None else f
+
+
+def _predict_v8(df: pd.DataFrame, bundle: dict, include_model_prob: bool) -> list[dict]:
+    """v8 renewal-decision rows. Same keys as the v7 rows (ResChat-compatible) plus:
+    model_raw_probability (rank by this), notice_on_file, outside_trained_lead_window,
+    outside_trained_population, target."""
+    from contracts.multifamily_churn.renewal import serve as v8
+    p, p_raw, contrib, _ = v8.predict(df, bundle)
+    # DISPLAY tenure only: person-level effective move-in (v5+ fix; TENANT.DTMOVEIN resets
+    # on unit transfers). The model keeps the record-level TenureMonths it was trained on.
+    try:
+        disp_tenure = data.apply_semantic_fixes(
+            df.assign(LeaseToDate=df["LeaseToDisplay"]), df["AnchorDate"].iat[0])["TenureMonths"]
+    except Exception:  # noqa: BLE001 -- fall back to the model's own tenure
+        disp_tenure = df["TenureMonths"]
+    lo, mid = _tiers(bundle)
+    lmin, lmax = bundle.get("lead_window_days", [45, 210])
+    trained = set(bundle.get("trained_properties") or [])
+    cols = bundle["feature_columns"]
+    out = []
+    for i in range(len(df)):
+        r = df.iloc[i]
+        d2e = _num(r.get("DaysToLeaseEnd"))
+        pid = _num(r.get("PropertyId"))
+        le = r.get("LeaseToDisplay")
+        if d2e is None and isinstance(le, pd.Timestamp) and pd.notna(le):
+            d2e = float((le - pd.Timestamp(r.get("AnchorDate"))).days)   # holdover: negative
+        rent = _num(r.get("CurrentRent"), 2) or _num(r.get("ActiveRent"), 2)
+        notice = int(_num(r.get("X_ev_notice_active")) or 0)
+        drv = v8.drivers(cols, contrib[i])
+        row = {
+            "scode": str(r.get("SCODE", "")).strip(),
+            "full_name": r.get("FullName"),
+            "unit": str(r.get("UnitCode")).strip() if r.get("UnitCode") is not None else None,
+            "property": data.PROPERTIES.get(int(pid)) if pid is not None else r.get("PropertyName"),
+            "lease_to": le.date().isoformat() if isinstance(le, pd.Timestamp) and pd.notna(le) else None,
+            "days_to_lease_end": int(d2e) if d2e is not None else None,
+            "tenure_months": _num(disp_tenure.iat[i], 1),
+            "monthly_rent": rent if rent and rent > 0 else None,
+            "has_notice": notice,            # PIT tenant_history notice (not TENANT.DTNOTICE)
+            "notice_on_file": bool(notice),
+            "actual_churn": None,
+            "churn_probability": round(float(p[i]), 4),
+            "risk_tier": _tier(float(p[i]), lo, mid),
+            "model_raw_probability": round(float(p_raw[i]), 4),
+            "target": "churn_at_lease_end",
+            "outside_trained_lead_window": d2e is None or not (lmin <= d2e <= lmax),
+            "outside_trained_population": pid is None or (trained and int(pid) not in trained),
+            "why": ", ".join(f"{'+' if x['direction'] == 'raises' else '-'}{x['label']}"
+                             for x in drv),
+            "drivers": drv,
+        }
+        if include_model_prob:
+            row["model_probability"] = row["churn_probability"]
+        out.append(row)
+    return out
+
+
 def _predict(df: pd.DataFrame, bundle: dict, as_of: str | None = None,
              include_model_prob: bool = False) -> list[dict]:
+    if _is_v8(bundle):
+        return _predict_v8(df, bundle, include_model_prob)
     cal = bundle.get("calibration") or {}
     corrected = _corrected(bundle)
     Xs = expl_contrib = None
@@ -611,12 +687,25 @@ def _tenant_payload(r: dict, res: dict) -> dict:
     else:
         lease_txt = "their lease-end date is unavailable"
     notice_txt = "a move-out notice is on file" if notice else "no move-out notice is on file"
-    summary = (f"{name} (unit {unit}, {prop}) has an estimated {round(p * 100)}% move-out "
-               f"risk ({tier}) as of {res.get('as_of')} -- about a {round(stay * 100)}% chance "
-               f"of staying. {lease_txt.capitalize()}; {notice_txt}.")
+    if r.get("target") == "churn_at_lease_end":   # v8 renewal-decision model
+        summary = (f"{name} (unit {unit}, {prop}) has an estimated {round(p * 100)}% chance "
+                   f"of moving out at the end of their current lease ({tier}) as of "
+                   f"{res.get('as_of')}. {lease_txt.capitalize()}; {notice_txt}.")
+        if r.get("outside_trained_lead_window"):
+            summary += (" Caution: the model is validated for leases ending 45-210 days out;"
+                        " this lease end is outside that window, so treat the score as rough.")
+        if r.get("outside_trained_population"):
+            summary += " Caution: this property was not in the model's training data."
+    else:
+        summary = (f"{name} (unit {unit}, {prop}) has an estimated {round(p * 100)}% move-out "
+                   f"risk ({tier}) as of {res.get('as_of')} -- about a {round(stay * 100)}% "
+                   f"chance of staying. {lease_txt.capitalize()}; {notice_txt}.")
     if r.get("why"):
         summary += " " + r["why"]
-    return {"contract": "multifamily-churn", "model_version": res.get("model_version"),
+    extra = {k: r[k] for k in ("target", "model_raw_probability", "notice_on_file",
+                               "outside_trained_lead_window", "outside_trained_population")
+             if k in r}
+    return {**extra, "contract": "multifamily-churn", "model_version": res.get("model_version"),
             "model_source": res.get("model_source"), "as_of": res.get("as_of"),
             "found": True, "scode": r.get("scode"), "full_name": name,
             "unit": unit, "property": prop, "risk_tier": tier,
@@ -651,3 +740,25 @@ def lookup_tenant(q: str, as_of: str | None = None) -> dict:
     else:
         out["matches"] = matches
     return out
+
+
+def _warm_v8_cache() -> None:
+    """At API start, pull the v8 extra-feature tables in the background so the first
+    ResChat request doesn't pay the ~10 s cold pull. Only under uvicorn (not tests or
+    scripts) and only when the served default is a v8 bundle. Failures are ignored, and
+    the first request will pull instead."""
+    import sys
+    if "uvicorn" not in sys.modules:
+        return
+
+    def _run():
+        try:
+            if _is_v8(_bundle()):
+                from contracts.multifamily_churn.renewal import serve as v8
+                v8.cached_raw()
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True, name="v8-cache-warm").start()
+
+
+_warm_v8_cache()

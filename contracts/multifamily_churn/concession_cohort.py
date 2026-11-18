@@ -21,6 +21,11 @@ Cohort definition (defaults; every knob is a query parameter):
   * no move-out notice filed. Notice is ~terminal (2.7% renew after it) and is a
     different population with its own economics; include_notice=true to see them.
 
+2026-11-18: RENEWAL_BUNDLE follows persuadables -> v8.1-renewal-pit (PIT-safe renewal
+model; "churn" = moving out at the end of the current lease). On v8 the drivers/features
+come from the v8 booster (renewal/serve.py), notice = TENANT notice OR the PIT
+tenant_history notice event, and tenure is displayed person-level.
+
 Rows are identifier-only by design — scode / hmyperson / unit / property, no names —
 and carry: lease timing, rent (in-place, prior, market), tenure, the h180 probability
 with the bundle's OWN drivers (not the h60 serving path's), risk/protective cohort
@@ -56,7 +61,7 @@ from contracts.multifamily_churn import (cohorts, contract, data, explain, persu
 
 BAND_LOW, BAND_HIGH = 0.20, 0.60
 DECISION_WINDOW_DAYS = 180
-RENEWAL_BUNDLE = persuadables.RENEWAL_BUNDLE          # v7-occupancy-h180 since 2026-09-25
+RENEWAL_BUNDLE = persuadables.RENEWAL_BUNDLE          # v8.1-renewal-pit since 2026-11-18
 GARAGE_CHARGE_CODE = 17           # RENTABLEITEMSTYPE.HCHARGECODE for garage/parking types
 GARAGE_MONTHS_TO_RERENT = 2.0     # Phase 0 median at 62W — the vacant stall's opportunity horizon
 DISCOUNT_PCT = 5.0
@@ -330,8 +335,12 @@ def _duration(g: pd.DataFrame) -> dict[str, list]:
 
 def _model_input(g: pd.DataFrame, b: dict) -> pd.DataFrame | None:
     """EXACTLY what the bundle scores: prepare_v4 output (imputed from the bundle's
-    training medians, property/pet label-encoded, bundle feature order)."""
+    training medians, property/pet label-encoded, bundle feature order). v8: the
+    renewal/serve.py model matrix."""
     try:
+        if contract._is_v8(b):
+            from contracts.multifamily_churn.renewal import serve as v8
+            return v8.predict(g, b)[3]
         return prepare_v4.prepare(g, b)
     except Exception:  # noqa: BLE001
         return None
@@ -343,6 +352,20 @@ def _drivers(g: pd.DataFrame, b: dict, X: pd.DataFrame | None) -> list[dict]:
     empty = [{"why": None, "drivers": []} for _ in range(len(g))]
     if X is None:
         return empty
+    if contract._is_v8(b):
+        try:
+            from contracts.multifamily_churn.renewal import serve as v8
+            cols = list(X.columns)
+            contrib = b["model"].booster_.predict(X, pred_contrib=True)[:, :-1]
+            out = []
+            for i in range(len(g)):
+                drv = v8.drivers(cols, contrib[i], k=5)
+                out.append({"why": ", ".join(
+                    f"{'+' if d['direction'] == 'raises' else '-'}{d['label']}" for d in drv),
+                    "drivers": drv})
+            return out
+        except Exception:  # noqa: BLE001
+            return empty
     try:
         Xs = b["scaler"].transform(X)
         contrib = explain.contributions(b, Xs)
@@ -410,8 +433,11 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
         "properties": [{"property_id": p, "name": data.PROPERTIES.get(p)} for p in pids],
         "definition": {
             "band": {"low": band_low, "high": band_high,
-                     "note": "calibrated churn probability at the NEXT lease decision, "
-                             "h180 renewal-forecast bundle, unclipped; stay = 1 - churn"},
+                     "note": ("calibrated chance of moving out at the end of the current "
+                              "lease, v8 renewal model; stay = 1 - churn"
+                              if contract._is_v8(b) else
+                              "calibrated churn probability at the NEXT lease decision, "
+                              "h180 renewal-forecast bundle, unclipped; stay = 1 - churn")},
             "decision_window_days": window,
             "notice_filed": "included" if include_notice else "excluded",
             "pii": "identifier-only rows (scode / hmyperson / unit / property); no names"},
@@ -452,6 +478,13 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
         return _empty(meta, {"scored_n": 0}, "No active residents found.")
 
     notice = pd.to_numeric(df.get("HasNotice"), errors="coerce").fillna(0) == 1
+    if contract._is_v8(b):
+        notice = notice | (pd.to_numeric(df.get("X_ev_notice_active"), errors="coerce").fillna(0) == 1)
+        df = df.assign(HasNotice=notice.astype(int))
+        try:   # person-level tenure for display (v8 TenureMonths is record-level)
+            df = df.assign(TenureMonths=data.apply_semantic_fixes(df.copy(), asof)["TenureMonths"].values)
+        except Exception:  # noqa: BLE001
+            pass
     in_band = df["p_churn"].between(band_low, band_high, inclusive="left")
     d2e = pd.to_numeric(df.get("_d2e"), errors="coerce")
     in_window = (d2e <= window) if window is not None else pd.Series(True, index=df.index)
@@ -627,7 +660,8 @@ def build(property_ids: list[int] | None = None, as_of: str | None = None,
     best = max(cheapest_counts.items(), key=lambda kv: kv[1])[0] if cheapest_counts else "none"
     summary = (
         f"{full_n} residents sit in the {band_low:g}-{band_high:g} churn band at the "
-        f"{b.get('horizon_days')}-day renewal decision ({'notice included' if include_notice else 'no notice'}"
+        + ("end of the current lease" if contract._is_v8(b) else f"{b.get('horizon_days')}-day renewal decision")
+        + f" ({'notice included' if include_notice else 'no notice'}"
         f"{win_txt}) across {scope}, out of {len(df)} scored: {exp_moveouts:.1f} expected "
         f"move-outs worth ${cohort['expected_loss']:,.0f} in turns if we do nothing. "
         f"Assumption-free read: the lowest-breakeven offer is '{best}' for "
